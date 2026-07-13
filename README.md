@@ -1,12 +1,12 @@
-# Openplace Template Overlay
+# openplace Template Overlay
 
-A template overlay and image-preparation userscript for Openplace.
+A template overlay and image-preparation userscript for openplace.
 
-> Important: This userscript runs only on `https://openplace.live/beta*`. It does not run on the main Openplace site.
+> Important: This userscript runs only on `https://openplace.live/beta*`. It does not run on the main openplace site.
 
 ## What it does
 
-- Adds image templates over the Openplace beta map.
+- Adds image templates over the openplace beta map.
 - Moves, resizes, locks, reorders, hides, and changes template opacity.
 - Opens an image editor with palette selection, dithering, preview zoom, resize sampling, and saved presets.
 - Supports large source images while using a safe working resolution for browser stability.
@@ -18,7 +18,7 @@ A template overlay and image-preparation userscript for Openplace.
 ## Install
 
 1. Install a userscript manager for your browser.
-2. Open [Openplace-Template-Overlay.production.user.js](./Openplace-Template-Overlay.production.user.js).
+2. Open [openplace-Template-Overlay.production.user.js](./openplace-Template-Overlay.production.user.js).
 3. Select **Raw** on GitHub.
 4. Let your userscript manager install the script.
 5. Open `https://openplace.live/beta`.
@@ -48,19 +48,10 @@ Install [Tampermonkey for Safari](https://www.tampermonkey.net/index.php?browser
 3. If a map pixel is selected first, the template starts with its top-left corner at that pixel.
 4. Drag a template to move it. Turn on **Edit mode** to resize it with handles.
 5. Expand a template card for its per-template controls.
-6. To show one paint color only, select a color in the Openplace palette, then choose **Selected color only** in that template's controls.
+6. To show one paint color only, select a color in the openplace palette, then choose **Selected color only** in that template's controls.
 
-The image editor can convert an image to the Openplace palette before adding it as a new template or replacing an existing template.
+The image editor can convert an image to the openplace palette before adding it as a new template or replacing an existing template.
 
-## Notes on large images
-
-Large images are accepted when the browser can decode them. To keep the editor and map responsive, processing is limited to a maximum working size of 8,192 pixels per side and 16 million pixels total. A 20,000 by 20,000 source therefore works at 4,000 by 4,000 during editing and map rendering.
-
-## Updates
-
-This repository publishes only the production userscript. Install the production file, not a development copy.
-
-For automatic updates after this repository has a public GitHub URL, the maintainer should add `@updateURL` and `@downloadURL` metadata pointing to the raw production file, and increase `@version` for every release.
 
 ## License
 
