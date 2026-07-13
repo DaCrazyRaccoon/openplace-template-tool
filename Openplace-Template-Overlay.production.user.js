@@ -3,7 +3,7 @@
 // @namespace    https://github.com/DaCrazyRaccoon/
 // @description  Drag-and-drop image template overlays for openplace, with responsive large-image editing, palette dithering, and grid-aligned resizing.
 // @license      MPL-2.0
-// @version      1.3.1
+// @version      1.3.2
 // @updateURL    https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/Openplace-Template-Overlay.production.user.js
 // @downloadURL  https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/Openplace-Template-Overlay.production.user.js
 // @homepageURL  https://github.com/DaCrazyRaccoon/openplace-template-tool
@@ -967,15 +967,59 @@
     
     const isImageFile = (f) => !!f && (/^image\//.test(f.type || "") || /\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(f.name || ""));
     function importError(f, e) { return `Couldn't import “${f?.name || "image"}”: ${e?.message || "unknown browser error"}`; }
+
+    async function decodedFrameToImage(frame, w, h) {
+        const canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        applyScaleAlgorithm(ctx, "high");
+        ctx.drawImage(frame, 0, 0, w, h);
+        frame.close?.();
+        const dataUrl = canvas.toDataURL("image/png");
+        return { dataUrl, img: await loadImage(dataUrl, "processed image") };
+    }
+
+    async function prepareImageFile(file) {
+        if (!isImageFile(file)) throw new Error("Please choose a supported image file.");
+        showToast(`Reading ${file.name}…`, "progress", 0);
+
+        if (typeof ImageDecoder === "function" && file.type) {
+            try {
+                const decoder = new ImageDecoder({ data: await file.arrayBuffer(), type: file.type });
+                await decoder.tracks.ready;
+                const track = decoder.tracks.selectedTrack;
+                const sourceW = track.codedWidth, sourceH = track.codedHeight;
+                const safe = safeWorkingSize(sourceW, sourceH);
+                showToast(safe.scaled ? `Preparing ${sourceW}×${sourceH} image at ${safe.w}×${safe.h}…` : `Decoding ${file.name}…`, "progress", 0);
+                const { image } = await decoder.decode({ desiredWidth: safe.w, desiredHeight: safe.h });
+                decoder.close?.();
+                const result = await decodedFrameToImage(image, safe.w, safe.h);
+                return { ...result, sourceW, sourceH, scaled: safe.scaled };
+            } catch (e) {
+                LOG("native image decode unavailable; using browser fallback", e);
+            }
+        }
+
+        const url = await fileToDataUrl(file, (loaded, total) => total && showToast(`Reading ${file.name}: ${Math.round(loaded / total * 100)}%…`, "progress", 0));
+        showToast(`Decoding ${file.name}…`, "progress", 0);
+        const original = await loadImage(url, file.name);
+        const safe = safeWorkingSize(original.naturalWidth, original.naturalHeight);
+        if (!safe.scaled) return { dataUrl: url, img: original, sourceW: original.naturalWidth, sourceH: original.naturalHeight, scaled: false };
+        showToast(`Preparing ${original.naturalWidth}×${original.naturalHeight} image at ${safe.w}×${safe.h}…`, "progress", 0);
+        const canvas = document.createElement("canvas");
+        canvas.width = safe.w; canvas.height = safe.h;
+        const ctx = canvas.getContext("2d");
+        applyScaleAlgorithm(ctx, "high");
+        ctx.drawImage(original, 0, 0, safe.w, safe.h);
+        const dataUrl = canvas.toDataURL("image/png");
+        return { dataUrl, img: await loadImage(dataUrl, "processed image"), sourceW: original.naturalWidth, sourceH: original.naturalHeight, scaled: true };
+    }
+
     async function createTemplateFromFile(file, lngLat) {
         try {
-            if (!isImageFile(file)) throw new Error("Please choose a supported image file.");
-            showToast(`Reading ${file.name}…`, "progress", 0);
-            const dataUrl = await fileToDataUrl(file, (loaded, total) => total && showToast(`Reading ${file.name}: ${Math.round(loaded / total * 100)}%…`, "progress", 0));
-            showToast(`Decoding ${file.name}…`, "progress", 0);
-            const img = await loadImage(dataUrl, file.name);
-            const t = await addTemplateFromDataUrl(dataUrl, file.name.replace(/\.[^.]+$/, ""), lngLat, img);
-            if (t) showToast(`Added “${file.name}”.`, "success");
+            const prepared = await prepareImageFile(file);
+            const t = await addTemplateFromDataUrl(prepared.dataUrl, file.name.replace(/\.[^.]+$/, ""), lngLat, prepared.img);
+            if (t) showToast(prepared.scaled ? `Added “${file.name}” at ${prepared.img.naturalWidth}×${prepared.img.naturalHeight}.` : `Added “${file.name}”.`, "success");
             return t;
         } catch (e) { LOG("image import failed", e); const m = importError(file, e); showToast(m, "error", 7000); return null; }
     }
@@ -1468,11 +1512,9 @@
                 const img = [...files].find(isImageFile);
                 try {
                     if (!img) throw new Error("Drop an image file to load it into the editor.");
-                    showToast(`Reading ${img.name}…`, "progress", 0);
-                    const url = await fileToDataUrl(img, (loaded, total) => total && showToast(`Reading ${img.name}: ${Math.round(loaded / total * 100)}%…`, "progress", 0));
-                    showToast(`Decoding ${img.name}…`, "progress", 0);
-                    await editorSetSource(url, img.name.replace(/\.[^.]+$/, ""), null, await loadImage(url, img.name));
-                    showToast(`Loaded “${img.name}”.`, "success");
+                    const prepared = await prepareImageFile(img);
+                    await editorSetSource(prepared.dataUrl, img.name.replace(/\.[^.]+$/, ""), null, prepared.img);
+                    showToast(prepared.scaled ? `Loaded “${img.name}” at ${prepared.img.naturalWidth}×${prepared.img.naturalHeight}.` : `Loaded “${img.name}”.`, "success");
                 } catch (err) { LOG("editor drop failed", err); showToast(importError(img, err), "error", 7000); }
                 return;
             }
@@ -2721,13 +2763,9 @@
             const f = e.target.files[0];
             if (f) {
                 try {
-                    if (!isImageFile(f)) throw new Error("Please choose a supported image file.");
-                    showToast(`Reading ${f.name}…`, "progress", 0);
-                    const url = await fileToDataUrl(f, (loaded, total) => total && showToast(`Reading ${f.name}: ${Math.round(loaded / total * 100)}%…`, "progress", 0));
-                    showToast(`Decoding ${f.name}…`, "progress", 0);
-                    const img = await loadImage(url, f.name);
-                    await editorSetSource(url, f.name.replace(/\.[^.]+$/, ""), null, img);
-                    showToast(`Loaded “${f.name}”.`, "success");
+                    const prepared = await prepareImageFile(f);
+                    await editorSetSource(prepared.dataUrl, f.name.replace(/\.[^.]+$/, ""), null, prepared.img);
+                    showToast(prepared.scaled ? `Loaded “${f.name}” at ${prepared.img.naturalWidth}×${prepared.img.naturalHeight}.` : `Loaded “${f.name}”.`, "success");
                 } catch (err) { LOG("editor import failed", err); showToast(importError(f, err), "error", 7000); }
             }
             fileInput.value = "";
