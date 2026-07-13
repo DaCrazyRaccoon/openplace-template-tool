@@ -12,13 +12,13 @@ A template overlay and image-preparation userscript for openplace.
 - Supports large source images while using a safe working resolution for browser stability.
 - Shows upload progress and clear upload errors.
 - Uses the selected map pixel as the placement point when adding an image.
-- Provides selected-color display mode for individual templates.
+- Includes a selected-color setting for locked templates.
 - Includes error comparison, easy paint, coordinate jump/copy, painted-area download, and keyboard panning.
 
 ## Install
 
 1. Install a userscript manager for your browser.
-2. Open [openplace-Template-Overlay.production.user.js](./openplace-Template-Overlay.production.user.js).
+2. Open [Openplace-Template-Overlay.user.js](./Openplace-Template-Overlay.user.js).
 3. Select **Raw** on GitHub.
 4. Let your userscript manager install the script.
 5. Open `https://openplace.live/beta`.
@@ -48,7 +48,7 @@ Install [Tampermonkey for Safari](https://www.tampermonkey.net/index.php?browser
 3. If a map pixel is selected first, the template starts with its top-left corner at that pixel.
 4. Drag a template to move it. Turn on **Edit mode** to resize it with handles.
 5. Expand a template card for its per-template controls.
-6. To show one paint color only, select a color in the openplace palette, then choose **Selected color only** in that template's controls.
+6. To show one paint color only on locked templates, select a color in the openplace palette, then enable **Selected color mode** in Settings.
 
 The image editor can convert an image to the openplace palette before adding it as a new template or replacing an existing template.
 

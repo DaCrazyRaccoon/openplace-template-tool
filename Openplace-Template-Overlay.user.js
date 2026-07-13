@@ -3,9 +3,9 @@
 // @namespace    https://github.com/DaCrazyRaccoon/
 // @description  Drag-and-drop image template overlays for openplace, with responsive large-image editing, palette dithering, and grid-aligned resizing.
 // @license      MPL-2.0
-// @version      1.3.4
-// @updateURL    https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/Openplace-Template-Overlay.production.user.js
-// @downloadURL  https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/Openplace-Template-Overlay.production.user.js
+// @version      1.3.12
+// @updateURL    https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/Openplace-Template-Overlay.user.js
+// @downloadURL  https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/Openplace-Template-Overlay.user.js
 // @homepageURL  https://github.com/DaCrazyRaccoon/openplace-template-tool
 // @supportURL   https://github.com/DaCrazyRaccoon/openplace-template-tool/issues
 // @match        https://openplace.live/beta*
@@ -15,6 +15,8 @@
 // @grant        GM.deleteValue
 // @grant        unsafeWindow
 // ==/UserScript==
+
+
 
 (() => {
     "use strict";
@@ -288,7 +290,7 @@
     }
 
     function saveSettings() {
-        rawSet(SETTINGS_KEY, JSON.stringify({ editMode, errorMode, gOutlineMode, gShrink, gEasyPaint, gHideCompleted, dlOutline, gPanStep, gColorSort, gMapScaleAlgorithm, gEditorScaleAlgorithm }));
+        rawSet(SETTINGS_KEY, JSON.stringify({ editMode, errorMode, gOutlineMode, gShrink, gEasyPaint, gHideCompleted, dlOutline, gPanStep, gColorSort, gMapScaleAlgorithm, gEditorScaleAlgorithm, gSelectedColorMode, selectedPaintColor }));
     }
     async function loadSettings() {
         try {
@@ -308,6 +310,8 @@
             if (["count", "countAsc", "missing", "missingAsc", "id", "name"].includes(s.gColorSort)) gColorSort = s.gColorSort;
             if (SCALE_ALGORITHMS.some(([v]) => v === s.gMapScaleAlgorithm)) gMapScaleAlgorithm = s.gMapScaleAlgorithm;
             if (SCALE_ALGORITHMS.some(([v]) => v === s.gEditorScaleAlgorithm)) gEditorScaleAlgorithm = s.gEditorScaleAlgorithm;
+            if (typeof s.gSelectedColorMode === "boolean") gSelectedColorMode = s.gSelectedColorMode;
+            if (PALETTE_BY_INDEX[s.selectedPaintColor]) selectedPaintColor = s.selectedPaintColor;
         } catch (e) {  }
     }
 
@@ -330,7 +334,8 @@
         gx: t.gx, gy: t.gy, w: t.w, h: t.h,
         opacity: t.opacity, visible: t.visible, locked: t.locked,
         aspectLock: t.aspectLock, disabled: t.disabled, collapsed: t.collapsed,
-        selectedColorOnly: !!t.selectedColorOnly
+        colorUsage: t._usageFor === colorUsageSignature(t) ? t._usage : null,
+        colorUsageFor: t._usageFor
     });
 
     
@@ -357,6 +362,7 @@
     let gColorSort = "count";
 
     let gMapScaleAlgorithm = "high", gEditorScaleAlgorithm = "high";
+    let gSelectedColorMode = false;
 
 
     let lastPixel = null;
@@ -364,7 +370,7 @@
 
     function updateSelectedColorTemplates() {
         for (const t of templates) {
-            if (!t.selectedColorOnly) continue;
+            if (!gSelectedColorMode || !t.locked) continue;
             t._gridCanvas = null; t._gridSig = null; t._dotGrid = null; t._dotGridSig = null;
             queueTemplateRender(t);
         }
@@ -373,6 +379,7 @@
     function setSelectedPaintColor(index) {
         if (!PALETTE_BY_INDEX[index] || selectedPaintColor === index) return;
         selectedPaintColor = index;
+        saveSettings();
         updateSelectedColorTemplates();
     }
 
@@ -408,9 +415,10 @@
     const selected = () => getTpl(selectedId);
 
     
-    const renderSig = (t) =>
-        `${gMapScaleAlgorithm}|${gOutlineMode}|${selectedPaintColor ?? "none"}|${t.selectedColorOnly ? "selected" : "all"}|${(t.disabled || []).join(",")}`;
-
+    const renderSig = (t) => {
+        const selected = gSelectedColorMode && t.locked ? selectedPaintColor ?? "none" : "all";
+        return `${gMapScaleAlgorithm}|${gOutlineMode}|${selected}|${(t.disabled || []).join(",")}`;
+    };
 
     function ensureImg(t) {
         if (t._imgEl) return Promise.resolve(t._imgEl);
@@ -555,26 +563,57 @@
     }
 
 
-    async function computeColorUsage(t) {
-        const sig = `${gMapScaleAlgorithm}|${t.w}x${t.h}`;
-        if (t._usage && t._usageFor === sig) return t._usage;
-        const img = await loadImage(t.dataUrl);
+    const colorUsageSignature = (t) => gMapScaleAlgorithm + "|" + t.w + "x" + t.h;
 
-        const d = scaledImageData(img, t.naturalW, t.naturalH, t.w, t.h, gMapScaleAlgorithm);
-        const set = PALETTE;
-        const counts = new Map();
-        for (let i = 0; i < d.length; i += 4) {
-            if (d[i + 3] <= 128) continue;
-            const c = closestInSet(d[i], d[i + 1], d[i + 2], set);
-            if (!c) continue;
-            counts.set(c.index, (counts.get(c.index) || 0) + 1);
+    async function computeColorUsage(t) {
+        const sig = colorUsageSignature(t);
+        if (t._usage && t._usageFor === sig) return t._usage;
+        if (t._usageTask?.sig === sig) return t._usageTask.promise;
+        const task = (async () => {
+            const img = await ensureImg(t);
+            const d = scaledImageData(img, t.naturalW, t.naturalH, t.w, t.h, gMapScaleAlgorithm);
+            const counts = new Map();
+            for (let i = 0; i < d.length; i += 4) {
+                if (d[i + 3] <= 128) continue;
+                const c = closestInSet(d[i], d[i + 1], d[i + 2], PALETTE);
+                if (c) counts.set(c.index, (counts.get(c.index) || 0) + 1);
+            }
+            const usage = [...counts.entries()]
+                .map(([index, count]) => ({ index, count, name: PALETTE_BY_INDEX[index].name, rgb: PALETTE_BY_INDEX[index].rgb }))
+                .sort((a, b) => b.count - a.count);
+            t._usage = usage;
+            t._usageFor = sig;
+            storeSet();
+            return usage;
+        })();
+        const entry = t._usageTask = { sig, promise: task };
+        try {
+            return await task;
+        } finally {
+            if (t._usageTask === entry) t._usageTask = null;
         }
-        const usage = [...counts.entries()]
-            .map(([index, count]) => ({ index, count, name: PALETTE_BY_INDEX[index].name, rgb: PALETTE_BY_INDEX[index].rgb }))
-            .sort((a, b) => b.count - a.count);
-        t._usage = usage;
-        t._usageFor = sig;
-        return usage;
+    }
+
+    const queuedColorUsage = new Set();
+    let colorUsageRunning = false;
+
+    function queueColorUsage(t) {
+        if (!t) return;
+        queuedColorUsage.add(t);
+        if (colorUsageRunning) return;
+        colorUsageRunning = true;
+        requestAnimationFrame(async () => {
+            const template = queuedColorUsage.values().next().value;
+            queuedColorUsage.delete(template);
+            try {
+                await computeColorUsage(template);
+            } catch (e) {
+                LOG("color count failed", e);
+            } finally {
+                colorUsageRunning = false;
+                if (queuedColorUsage.size) queueColorUsage(queuedColorUsage.values().next().value);
+            }
+        });
     }
 
     const loadImage = (url, label = "image") => new Promise((res, rej) => {
@@ -661,7 +700,7 @@
         const a = t._analysis;
         if (errorMode && t.visible && a && a.errorCanvas
             && a.w === t.w && a.h === t.h && a.gx === t.gx && a.gy === t.gy) return "err";
-        if (gShrink && z >= DOT_ZOOM && dotFits(t)) return "dots";
+        if (t.locked && gShrink && z >= DOT_ZOOM && dotFits(t)) return "dots";
         return "filled";
     }
 
@@ -678,6 +717,29 @@
         restackTemplates();
     }
 
+    function updateTemplateMoveCoordinates(t) {
+        if (!map) return;
+        const updateTiles = (tiles) => {
+            if (!tiles) return;
+            for (const [key, e] of tiles) {
+                const [tx, ty] = key.split("-").map(Number);
+                const tileLeft = tx * TILE_SIZE, tileTop = ty * TILE_SIZE;
+                const ix0 = Math.max(t.gx, tileLeft), iy0 = Math.max(t.gy, tileTop);
+                const ix1 = Math.min(t.gx + t.w, tileLeft + TILE_SIZE), iy1 = Math.min(t.gy + t.h, tileTop + TILE_SIZE);
+                const offX = ix0 - t.gx, offY = iy0 - t.gy, ow = ix1 - ix0, oh = iy1 - iy0;
+                if (ow <= 0 || oh <= 0 || e.offX !== offX || e.offY !== offY || e.ow !== ow || e.oh !== oh) continue;
+                try {
+                    map.getSource(e.sourceId)?.setCoordinates([
+                        [gpxToLng(ix0), gpyToLat(iy0)], [gpxToLng(ix1), gpyToLat(iy0)],
+                        [gpxToLng(ix1), gpyToLat(iy1)], [gpxToLng(ix0), gpyToLat(iy1)]
+                    ]);
+                } catch (_) {}
+            }
+        };
+        updateTiles(t._tiles);
+        updateTiles(t._dotTiles);
+        map.triggerRepaint();
+    }
 
     function queueTemplateRender(t) {
         t._renderVersion = (t._renderVersion || 0) + 1;
@@ -742,7 +804,7 @@
         const d = scaledImageData(img, t.naturalW, t.naturalH, t.w, t.h, gMapScaleAlgorithm);
 
         const ds = new Set(t.disabled || []);
-        const onlyColor = t.selectedColorOnly ? selectedPaintColor : null;
+        const onlyColor = gSelectedColorMode && t.locked ? selectedPaintColor : null;
         for (let i = 0; i < d.length; i += 4) {
             if (d[i + 3] <= 128) { d[i + 3] = 0; continue; }
             const c = closestInSet(d[i], d[i + 1], d[i + 2], PALETTE);
@@ -924,7 +986,7 @@
                         }
                     }
                     ctx.putImageData(out, 0, 0);
-                    e.sig = sig; e.ix0 = ix0; e.iy0 = iy0; e.ow = ow; e.oh = oh;
+                    e.sig = sig; e.ix0 = ix0; e.iy0 = iy0; e.offX = offX; e.offY = offY; e.ow = ow; e.oh = oh;
                 }
 
 
@@ -1192,7 +1254,7 @@
     }
 
     async function addTemplateFromDataUrl(dataUrl, name, lngLat, loadedImg = null) {
-        if (!map) { setStatus("Map not ready yet — try again in a moment."); return null; }
+        if (!map) { setStatus("Map not ready yet — try again in a moment.", "error", 5000); return null; }
         const img = loadedImg || await loadImage(dataUrl, name || "image");
         const naturalW = img.naturalWidth, naturalH = img.naturalHeight;
         const safe = safeWorkingSize(naturalW, naturalH);
@@ -1216,11 +1278,12 @@
             dataUrl, naturalW, naturalH,
             gx, gy, w: safe.w, h: safe.h,
             opacity: 0.7, visible: true, locked: false,
-            aspectLock: true, disabled: [], selectedColorOnly: false
+            aspectLock: true, disabled: []
         };
         templates.unshift(t);
         selectedId = t.id;
         await updateTemplateTiles(t);
+        queueColorUsage(t);
         storeSet();
         renderPanel();
         updateOverlay();
@@ -1243,6 +1306,7 @@
         t._procCanvas = null; t._procSig = null;
         t._gridCanvas = null; t._gridSig = null;
         t._usage = null; t._usageFor = null;
+        queueColorUsage(t);
         t._analysis = null;
         t._dotGrid = null; t._dotGridSig = null;
         if (map) { removeFilledTiles(t); removeDotLayer(t); }
@@ -1306,8 +1370,8 @@
 
     function teleportTo(str) {
         const c = parseCoords(str);
-        if (!c) { setStatus("Couldn't read coordinates. Try: tX tY X Y (e.g. 415 811 50 434)."); return false; }
-        if (!map) { setStatus("Map not ready yet — try again in a moment."); return false; }
+        if (!c) { setStatus("Couldn't read coordinates. Try: tX tY X Y (e.g. 415 811 50 434).", "error", 5000); return false; }
+        if (!map) { setStatus("Map not ready yet — try again in a moment.", "error", 5000); return false; }
         const lng = gpxToLng(c.gx + 0.5), lat = gpyToLat(c.gy + 0.5);
         map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 14), duration: 800 });
         selectPixelAfterMove(lng, lat);
@@ -1567,6 +1631,7 @@
                 resizeFromHandle(t, drag, pgx, pgy, e.shiftKey);
             }
             t._analysis = null;
+            if (drag.mode === "move") updateTemplateMoveCoordinates(t);
             queueTemplateRender(t);
             updateOverlay();
             renderPanelLight();
@@ -1685,7 +1750,7 @@
                 } catch (err) { LOG("editor drop failed", err); showToast(importError(img, err), "error", 7000); }
                 return;
             }
-            if (!map) { setStatus("Map not ready yet — try again in a moment."); return; }
+            if (!map) { setStatus("Map not ready yet — try again in a moment.", "error", 5000); return; }
             const rect = map.getContainer().getBoundingClientRect();
             let lngLat = null;
             if (e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom) {
@@ -1697,28 +1762,38 @@
     }
 
     
-    let panel = null, panelBody = null, fab = null, statusEl = null, statusMsg = "";
-    let toastEl = null, toastTimer = null;
+    let panel = null, panelBody = null, fab = null, statusMsg = "";
+    let toastEl = null, toastTimer = null, toastId = 0, statusToastId = 0;
+
     function showToast(message, kind = "info", ms = 3500) {
-        if (!toastEl) { toastEl = document.createElement("div"); toastEl.className = "rtpl-toast"; document.body.appendChild(toastEl); }
-        clearTimeout(toastTimer); toastEl.textContent = message; toastEl.className = `rtpl-toast rtpl-toast-${kind} rtpl-toast-on`;
-        if (ms > 0) toastTimer = setTimeout(() => toastEl?.classList.remove("rtpl-toast-on"), ms);
-    }
-
-    function setStatus(msg) {
-        statusMsg = msg || "";
-        if (statusEl) {
-            statusEl.textContent = statusMsg;
-            statusEl.style.display = statusMsg ? "block" : "none";
+        if (!toastEl) {
+            toastEl = document.createElement("div");
+            toastEl.className = "rtpl-toast";
+            document.body.appendChild(toastEl);
         }
+        const id = ++toastId;
+        clearTimeout(toastTimer);
+        toastEl.textContent = message;
+        toastEl.className = "rtpl-toast rtpl-toast-" + kind + " rtpl-toast-on";
+        if (ms > 0) toastTimer = setTimeout(() => { if (id === toastId) toastEl?.classList.remove("rtpl-toast-on"); }, ms);
+        return id;
     }
 
+    function hideToast(id) {
+        if (id !== toastId) return;
+        clearTimeout(toastTimer);
+        toastEl?.classList.remove("rtpl-toast-on");
+    }
 
-    let statusFlashTimer = null;
-    function flashStatus(msg, ms = 2500) {
-        setStatus(msg);
-        clearTimeout(statusFlashTimer);
-        statusFlashTimer = setTimeout(() => { if (statusMsg === msg) setStatus(""); }, ms);
+    function setStatus(msg, kind = "info", ms = 3500) {
+        statusMsg = msg || "";
+        if (statusToastId) hideToast(statusToastId);
+        statusToastId = statusMsg ? showToast(statusMsg, kind, ms) : 0;
+    }
+
+    function flashStatus(msg, ms = 2500, kind = "info") {
+        statusMsg = msg || "";
+        showToast(statusMsg, kind, ms);
     }
 
     function buildUI() {
@@ -1755,7 +1830,6 @@
                     <button class="rtpl-toggle rtpl-tp-pick" title="Put the last selected map pixel coordinates in the jump field and copy them">Copy selected coordinates</button>
                 </div>
             </div>
-            <div class="rtpl-status"></div>
             <div class="rtpl-tpl">
                 <div class="rtpl-tpl-head"><button class="rtpl-tpl-caret">▾</button> Templates</div>
                 <div class="rtpl-tpl-body">
@@ -1784,14 +1858,14 @@
                         <label class="rtpl-num">C2 px Y<input type="number" class="rtpl-c2py"></label>
                     </div>
                     <button class="rtpl-add rtpl-dl-go">Download PNG</button>
-                    <div class="rtpl-dl-status"></div>
                 </div>
             </div>
             <div class="rtpl-settings rtpl-settings-collapsed">
                 <div class="rtpl-settings-head"><button class="rtpl-settings-caret">▸</button> Settings</div>
                 <div class="rtpl-globaltoggles">
                     <label title="Show the on-map box and drag handles used to move or resize templates."><input type="checkbox" class="rtpl-edit"> Edit mode</label>
-                    <label title="At close map zoom levels, draw each template pixel as a small centered dot."><input type="checkbox" class="rtpl-g-shrink"> Small pixels</label>
+                    <label title="At close map zoom levels, draw each locked template pixel as a small centered dot."><input type="checkbox" class="rtpl-g-shrink"> Small pixels</label>
+                    <label title="Show only the most recently selected Openplace palette color on locked templates."><input type="checkbox" class="rtpl-g-selectedcolor"> Selected color mode</label>
                     <label><input type="checkbox" class="rtpl-g-easy"> Easy paint <span class="rtpl-info" tabindex="0" title="Only paint pixels that match the template's colour here; everything else stays as-is. Already-correct pixels are skipped too. Refresh the page after painting to see the proper changes.">?</span></label>
                     <label title="For visible templates, show correct pixels in green, missing pixels in yellow, and wrong pixels in red."><input type="checkbox" class="rtpl-g-err"> Error mode</label>
                     <label><input type="checkbox" class="rtpl-g-hidedone"> Hide completed colors</label>
@@ -1808,9 +1882,7 @@
         `;
         document.body.appendChild(panel);
         panelBody = panel.querySelector(".rtpl-list");
-        statusEl = panel.querySelector(".rtpl-status");
         accountBarEl = panel.querySelector(".rtpl-account");
-        setStatus(statusMsg);
         updateAccountBar();
 
         panel.querySelector(".rtpl-x").addEventListener("click", () => panel.classList.add("rtpl-hidden"));
@@ -1837,7 +1909,7 @@
         tpInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doTeleport(); } });
 
         panel.querySelector(".rtpl-tp-pick").addEventListener("click", async () => {
-            if (!lastPixel) { flashStatus("Click a pixel on the map first."); return; }
+            if (!lastPixel) { flashStatus("Click a pixel on the map first.", 3500, "error"); return; }
             const { tx, ty, px, py } = gpToTilePixel(lastPixel.gx, lastPixel.gy);
             const s = coordString(tx, ty, px, py);
             tpInput.value = s;
@@ -1852,12 +1924,14 @@
 
         const editCb = panel.querySelector(".rtpl-edit");
         const shrinkCb = panel.querySelector(".rtpl-g-shrink");
+        const selectedColorCb = panel.querySelector(".rtpl-g-selectedcolor");
         const easyCb = panel.querySelector(".rtpl-g-easy");
         const errCb = panel.querySelector(".rtpl-g-err");
         const hideDoneCb = panel.querySelector(".rtpl-g-hidedone");
         const outlineBtn = panel.querySelector(".rtpl-g-outline");
         editCb.checked = editMode;
         shrinkCb.checked = gShrink;
+        selectedColorCb.checked = gSelectedColorMode;
         easyCb.checked = gEasyPaint;
         errCb.checked = errorMode;
         hideDoneCb.checked = gHideCompleted;
@@ -1869,6 +1943,16 @@
         });
         shrinkCb.addEventListener("change", async (e) => {
             gShrink = e.target.checked; saveSettings();
+            await applyGlobalDisplayChange();
+        });
+        selectedColorCb.addEventListener("change", async (e) => {
+            if (e.target.checked && selectedPaintColor == null) {
+                e.target.checked = false;
+                showToast("Select a color in the Openplace palette first.", "info");
+                return;
+            }
+            gSelectedColorMode = e.target.checked;
+            saveSettings();
             await applyGlobalDisplayChange();
         });
         easyCb.addEventListener("change", (e) => {
@@ -1916,7 +2000,7 @@
     async function setErrorMode(on) {
         errorMode = on; saveSettings();
         if (on) {
-            setStatus("Comparing templates with canvas…");
+            setStatus("Comparing templates with canvas…", "progress", 0);
             for (const t of templates) {
                 if (t.visible && !t._analysis) {
                     try { await analyzeTemplate(t); } catch (e) { LOG("analysis failed", e); }
@@ -1954,7 +2038,11 @@
         updateOverlay();
     }
 
-    const dlStatus = (m) => { const el = panel.querySelector(".rtpl-dl-status"); if (el) el.textContent = m || ""; };
+    let downloadToastId = 0;
+    const dlStatus = (m, kind = "info", ms = 3500) => {
+        if (downloadToastId) hideToast(downloadToastId);
+        downloadToastId = m ? showToast(m, kind, ms) : 0;
+    };
 
     function wireDownloadTool() {
         const setPick = (n) => {
@@ -2021,11 +2109,11 @@
 
     async function downloadArea() {
         const c1 = dlReadCorner(1), c2 = dlReadCorner(2);
-        if (!c1 || !c2) { dlStatus("Enter or pick both corners first."); return; }
+        if (!c1 || !c2) { dlStatus("Enter or pick both corners first.", "error", 5000); return; }
         const minX = Math.min(c1[0], c2[0]), minY = Math.min(c1[1], c2[1]);
         const maxX = Math.max(c1[0], c2[0]), maxY = Math.max(c1[1], c2[1]);
         const w = maxX - minX + 1, h = maxY - minY + 1;
-        if (w <= 0 || h <= 0) { dlStatus("Invalid area."); return; }
+        if (w <= 0 || h <= 0) { dlStatus("Invalid area.", "error", 5000); return; }
         if (w > MAX_DL_DIM || h > MAX_DL_DIM) { dlStatus(`Area too big — max ${MAX_DL_DIM}px per side (this is ${w}×${h}).`); return; }
         if (w * h > MAX_DL_PIXELS) { dlStatus(`Area too large — max ${Math.round(MAX_DL_PIXELS / 1e6)}M pixels.`); return; }
 
@@ -2041,7 +2129,7 @@
             dlStatus(`Saved ${w}×${h}px.`);
         } catch (e) {
             LOG("download failed", e);
-            dlStatus("Download failed (see console). Tiles may be cross-origin without CORS.");
+            dlStatus("Download failed. Tiles may be cross-origin without CORS.", "error", 7000);
         }
     }
 
@@ -2166,18 +2254,12 @@
                 </div>
                 <div class="rtpl-collapsible">
                     <div class="rtpl-row3">
-                        <button class="rtpl-toggle rtpl-lock">${t.locked ? "Locked" : "Unlocked"}</button>
+                        <button class="rtpl-toggle rtpl-lock">${t.locked ? "Unlock" : "Lock"}</button>
                         ${t.locked ? "" : `
                         <button class="rtpl-toggle rtpl-ar">${t.aspectLock ? "Ratio" : "Free resize"}</button>
                         <button class="rtpl-toggle rtpl-one">1:1 size</button>
                         `}
-                    </div>
-                    ${t.locked ? "" : `
-                    <div class="rtpl-row3">
-                        <button class="rtpl-toggle rtpl-selcolor">${t.selectedColorOnly ? "Selected color only" : "All colors"}</button>
-                    </div>
-                    `}
-                    ${t.locked ? `
+                    </div>${t.locked ? `
                     <div class="rtpl-coordstr">tX: ${tx}  tY: ${ty}  X: ${px}  Y: ${py}</div>
                     ` : `
                     <div class="rtpl-row3">
@@ -2195,7 +2277,6 @@
                     <div class="rtpl-colors"></div>
                 </div>
             `;
-            // select on click (but not when interacting with inputs/buttons,
 
             card.addEventListener("pointerdown", (e) => {
                 if (e.target.closest("input,button,select,.rtpl-dim,.rtpl-coordstr,.rtpl-drag")) return;
@@ -2239,8 +2320,9 @@
                 setTemplateOpacity(t);
                 storeSet();
             });
-            card.querySelector(".rtpl-lock").addEventListener("click", () => {
+            card.querySelector(".rtpl-lock").addEventListener("click", async () => {
                 t.locked = !t.locked;
+                await updateTemplateTiles(t);
 
                 renderPanel(); updateOverlay(); storeSet();
                 if (t.locked && !t.collapsed) {
@@ -2252,17 +2334,6 @@
             card.querySelector(".rtpl-ar")?.addEventListener("click", (e) => {
                 t.aspectLock = !t.aspectLock;
                 e.target.textContent = t.aspectLock ? "Ratio" : "Free resize";
-                storeSet();
-            });
-            card.querySelector(".rtpl-selcolor")?.addEventListener("click", async (e) => {
-                if (selectedPaintColor == null) {
-                    showToast("Select a color in the Openplace palette first.", "info");
-                    return;
-                }
-                t.selectedColorOnly = !t.selectedColorOnly;
-                e.target.textContent = t.selectedColorOnly ? "Selected color only" : "All colors";
-                t._gridCanvas = null; t._gridSig = null; t._dotGrid = null; t._dotGridSig = null;
-                await updateTemplateTiles(t);
                 storeSet();
             });
             card.querySelector(".rtpl-one")?.addEventListener("click", async () => {
@@ -2289,7 +2360,7 @@
                     card.querySelector(sel).addEventListener("change", applyPos);
                 }
                 card.querySelector(".rtpl-usepixel").addEventListener("click", async () => {
-                    if (!lastPixel) { flashStatus("Click a pixel on the map first, then use this."); return; }
+                    if (!lastPixel) { flashStatus("Click a pixel on the map first, then use this.", 3500, "error"); return; }
                     t.gx = clamp(lastPixel.gx, 0, WORLD_PIXELS - t.w);
                     t.gy = clamp(lastPixel.gy, 0, WORLD_PIXELS - t.h);
                     markGeometryChanged(t);
@@ -2321,6 +2392,7 @@
 
     function markGeometryChanged(t) {
         t._analysis = null;
+        queueColorUsage(t);
         if (errorMode && t.visible && t.w * t.h <= AUTO_MAX_PIXELS) {
             analyzeTemplate(t)
                 .then(() => { updateTemplateTiles(t); applyAnalysisToCard(t, cardOf(t)); })
@@ -2409,9 +2481,6 @@
         box.style.display = "block";
 
         box.innerHTML = `
-            <div class="rtpl-cl-actions">
-                <button class="rtpl-toggle rtpl-refresh">🔄 Refresh counts</button>
-            </div>
             <div class="rtpl-totals">${totalsHtmlFor(t)}</div>
             <div class="rtpl-cl-head">Colors — left to place / total (uncheck to hide)</div>
             <div class="rtpl-cl-sortrow">Sort:
@@ -2485,7 +2554,6 @@
         box.querySelector(".rtpl-cl-all").addEventListener("click", () => setAll(false));
         box.querySelector(".rtpl-cl-none").addEventListener("click", () => setAll(true));
 
-        box.querySelector(".rtpl-refresh").addEventListener("click", () => refreshAnalysis(t, card));
     }
 
     const escapeHtml = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -2558,7 +2626,7 @@
         .rtpl-g-cmrow{display:flex;gap:8px;align-items:center}
         .rtpl-g-panstep{flex:0 0 auto;width:64px;background:#161a1f;border:1px solid #2c333d;color:#fff;border-radius:4px;padding:3px 5px}
         .rtpl-hint{padding:4px 12px 8px;color:#8a93a0;font-size:11px;line-height:1.4}
-        .rtpl-status{margin:0 12px 8px;padding:6px 8px;border-radius:6px;background:#3a2a1a;color:#ffce8a;font-size:11px;display:none}
+
         .rtpl-list{padding:0 12px 12px;display:flex;flex-direction:column;gap:10px}
         .rtpl-empty{color:#888;padding:8px 0}
         .rtpl-card{border:1px solid #2c333d;border-radius:8px;padding:8px;background:#20262e}
@@ -2611,7 +2679,7 @@
         .rtpl-dl-collapsed .rtpl-dl-body{display:none}
         .rtpl-dlout{display:flex;gap:6px;align-items:center;color:#bbb;font-size:12px;margin-bottom:6px;cursor:pointer}
         .rtpl-dl-go{margin-top:8px}
-        .rtpl-dl-status{margin-top:6px;color:#8a93a0;font-size:11px;min-height:14px}
+
         .rtpl-tpl{border-top:1px solid #333;padding-top:4px}
         .rtpl-tpl-head{display:flex;align-items:center;gap:6px;padding:6px 12px;cursor:pointer;user-select:none;color:#cdd3dc;font-weight:600}
         .rtpl-tpl-caret{background:none;border:none;color:#9aa3b0;cursor:pointer;font-size:13px;padding:0}
@@ -2654,30 +2722,20 @@
         .rtpl-ed-apply .rtpl-add{width:auto;padding:8px 12px}
         .rtpl-ed-import{width:auto;padding:8px 12px}
         .rtpl-ed-stage{flex:1;display:flex;gap:12px;padding:12px 16px;overflow:auto;min-height:0;position:relative}
-        .rtpl-ed-pane{flex:1;display:flex;flex-direction:column;min-width:0}
-        /* Little corner-pill labels overlaid on the preview: Before top-left,
-           After top-right. (Same look in side-by-side and slider modes.) */
-        .rtpl-ed-label{position:absolute;top:8px;left:8px;z-index:3;margin:0;font-size:12px;background:rgba(0,0,0,.6);padding:2px 6px;border-radius:4px;color:#fff;pointer-events:none}
+        .rtpl-ed-pane{flex:1;display:flex;flex-direction:column;min-width:0}        .rtpl-ed-label{position:absolute;top:8px;left:8px;z-index:3;margin:0;font-size:12px;background:rgba(0,0,0,.6);padding:2px 6px;border-radius:4px;color:#fff;pointer-events:none}
         .rtpl-ed-pane-after .rtpl-ed-label{left:auto;right:8px}
         .rtpl-ed-canwrap{flex:1;display:grid;place-items:center;background:#0d1014 repeating-conic-gradient(#1c2128 0 25%,transparent 0 50%) 0 0/16px 16px;border:1px solid #2c333d;border-radius:8px;overflow:auto;min-height:0;cursor:grab}
         .rtpl-ed-canwrap.rtpl-panning{cursor:grabbing}
         .rtpl-mode-slider .rtpl-ed-canwrap{cursor:default}
         .rtpl-ed-canwrap canvas{image-rendering:pixelated;display:block}
         .rtpl-ed-handle{display:none}
-        /* Slider (overlay) comparison mode */
         .rtpl-ed-stage.rtpl-mode-slider{display:block}
-        .rtpl-mode-slider .rtpl-ed-pane{position:absolute;inset:12px 16px}
-        /* Reveal BEFORE on the left, AFTER on the right: the after pane (on top)
-           is clipped to show only the portion to the RIGHT of the divider. */
-        .rtpl-mode-slider .rtpl-ed-pane-after{clip-path:inset(0 0 0 calc(var(--split) * 1%))}
+        .rtpl-mode-slider .rtpl-ed-pane{position:absolute;inset:12px 16px}        .rtpl-mode-slider .rtpl-ed-pane-after{clip-path:inset(0 0 0 calc(var(--split) * 1%))}
         .rtpl-mode-slider .rtpl-ed-handle{display:flex;position:absolute;top:12px;bottom:12px;left:calc(16px + (100% - 32px) * var(--split) / 100);transform:translateX(-50%);width:2px;background:#fff;z-index:4;cursor:ew-resize;align-items:center;justify-content:center;touch-action:none}
         .rtpl-ed-knob{background:#fff;color:#000;border-radius:50%;width:30px;height:30px;display:flex;align-items:center;justify-content:center;font-size:14px;box-shadow:0 1px 5px rgba(0,0,0,.6)}
         .rtpl-ed-pane-before,.rtpl-ed-pane-after{position:relative}
         .rtpl-ed-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:0 16px;color:#8a93a0;cursor:pointer}
-        .rtpl-ed-empty:hover{color:#cfe0ff}
-        /* Loading overlay on the "after" pane: a label + an indeterminate bar
-           (compositor-animated so it keeps moving during heavy dithering). */
-        .rtpl-ed-loading{position:absolute;inset:0;z-index:10;display:none;flex-direction:column;align-items:center;justify-content:center;gap:8px;background:rgba(13,16,20,.45);pointer-events:none}
+        .rtpl-ed-empty:hover{color:#cfe0ff}        .rtpl-ed-loading{position:absolute;inset:0;z-index:10;display:none;flex-direction:column;align-items:center;justify-content:center;gap:8px;background:rgba(13,16,20,.45);pointer-events:none}
         .rtpl-ed-loading.rtpl-on{display:flex}
         .rtpl-toast{position:fixed;right:16px;bottom:16px;z-index:2147483647;max-width:min(420px,calc(100vw - 32px));padding:10px 13px;border:1px solid #3a86ff;border-radius:8px;background:#121820;color:#f4f7fb;font:13px system-ui,sans-serif;box-shadow:0 8px 28px #0008;opacity:0;transform:translateY(12px);pointer-events:none;transition:.18s}.rtpl-toast-on{opacity:1;transform:translateY(0)}.rtpl-toast-success{border-color:#4ecb71}.rtpl-toast-error{border-color:#ff5b5b;background:#32191b}.rtpl-toast-progress{border-color:#ffb300}
         .rtpl-ed-loading-msg{color:#ffd9a0;font:600 12px ui-monospace,monospace;letter-spacing:.5px}
@@ -2715,7 +2773,7 @@
         .rtpl-panel .rtpl-toggle:hover,.rtpl-panel .rtpl-cl-actions button:hover{background:#222d38}
         .rtpl-panel .rtpl-num input,.rtpl-panel .rtpl-g-panstep,.rtpl-panel .rtpl-g-scale{background:#0c1116;border-color:#2d3946;border-radius:6px;color:#e7edf5}
         .rtpl-panel .rtpl-g-scale{min-width:0;flex:1;padding:4px 6px}
-        .rtpl-panel .rtpl-status{margin:10px 12px 0}
+
         .rtpl-panel .rtpl-info{border-color:#617388;color:#d1dbe6}
         @media (max-width:600px){.rtpl-panel{width:calc(100vw - 24px);max-height:82vh}.rtpl-panel .rtpl-tpl,.rtpl-panel .rtpl-dl,.rtpl-panel .rtpl-settings{margin-left:10px;margin-right:10px}}
         @media (max-width:600px){.rtpl-panel{width:calc(100vw - 24px)}.rtpl-ed-stage:not(.rtpl-mode-slider){flex-direction:column}}
@@ -3431,12 +3489,21 @@
         userPresets = await loadUserPresets();
         const saved = await storeGet([]);
         if (Array.isArray(saved) && saved.length) {
-            templates = saved.map((t) => ({
-                disabled: [], aspectLock: true, selectedColorOnly: false,
-                opacity: 0.7, visible: true, locked: false, collapsed: false,
-                ...t,
-                disabled: Array.isArray(t.disabled) ? t.disabled : []
-            }));
+            templates = saved.map((savedTemplate) => {
+                const template = {
+                    disabled: [], aspectLock: true,
+                    opacity: 0.7, visible: true, locked: false, collapsed: false,
+                    ...savedTemplate,
+                    disabled: Array.isArray(savedTemplate.disabled) ? savedTemplate.disabled : []
+                };
+                if (Array.isArray(savedTemplate.colorUsage) && savedTemplate.colorUsageFor === colorUsageSignature(template)) {
+                    template._usage = savedTemplate.colorUsage
+                        .filter((u) => PALETTE_BY_INDEX[u?.index] && Number.isFinite(u.count) && u.count > 0)
+                        .map((u) => ({ index: u.index, count: Math.floor(u.count), name: PALETTE_BY_INDEX[u.index].name, rgb: PALETTE_BY_INDEX[u.index].rgb }));
+                    template._usageFor = savedTemplate.colorUsageFor;
+                }
+                return template;
+            });
             nextId = Math.max(...templates.map((t) => t.id)) + 1;
             selectedId = templates[0].id;
         }
@@ -3445,7 +3512,8 @@
         attachDropHandlers();
         attachPaletteSelectionTracking();
         renderPanel();
-        setStatus("Waiting for map…");
+        templates.forEach(queueColorUsage);
+        setStatus("Waiting for map…", "progress", 0);
 
 
         map = await waitForMap();
