@@ -3,7 +3,7 @@
 // @namespace    https://github.com/DaCrazyRaccoon/
 // @description  Drag-and-drop image template overlays for openplace, with responsive large-image editing, palette dithering, and grid-aligned resizing.
 // @license      MPL-2.0
-// @version      1.3.2
+// @version      1.3.3
 // @updateURL    https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/Openplace-Template-Overlay.production.user.js
 // @downloadURL  https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/Openplace-Template-Overlay.production.user.js
 // @homepageURL  https://github.com/DaCrazyRaccoon/openplace-template-tool
@@ -968,6 +968,18 @@
     const isImageFile = (f) => !!f && (/^image\//.test(f.type || "") || /\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(f.name || ""));
     function importError(f, e) { return `Couldn't import “${f?.name || "image"}”: ${e?.message || "unknown browser error"}`; }
 
+    async function canvasToPreparedImage(canvas) {
+        const blob = await new Promise((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error("The browser could not encode the resized image.")), "image/png"));
+        const objectUrl = URL.createObjectURL(blob);
+        try {
+            const img = await loadImage(objectUrl, "processed image");
+            const dataUrl = await fileToDataUrl(blob);
+            return { dataUrl, img };
+        } finally {
+            URL.revokeObjectURL(objectUrl);
+        }
+    }
+
     async function decodedFrameToImage(frame, w, h) {
         const canvas = document.createElement("canvas");
         canvas.width = w; canvas.height = h;
@@ -975,28 +987,63 @@
         applyScaleAlgorithm(ctx, "high");
         ctx.drawImage(frame, 0, 0, w, h);
         frame.close?.();
-        const dataUrl = canvas.toDataURL("image/png");
-        return { dataUrl, img: await loadImage(dataUrl, "processed image") };
+        return canvasToPreparedImage(canvas);
+    }
+
+    async function readImageDimensions(file) {
+        const bytes = new Uint8Array(await file.slice(0, 262144).arrayBuffer());
+        const be32 = (offset) => ((bytes[offset] << 24) | (bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3]) >>> 0;
+        if (bytes.length >= 24 && bytes[0] === 137 && bytes[1] === 80 && bytes[2] === 78 && bytes[3] === 71) return { w: be32(16), h: be32(20) };
+        if (bytes.length >= 10 && bytes[0] === 0xff && bytes[1] === 0xd8) {
+            for (let i = 2; i + 9 < bytes.length;) {
+                if (bytes[i] !== 0xff) { i++; continue; }
+                const marker = bytes[i + 1], len = (bytes[i + 2] << 8) + bytes[i + 3];
+                if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) return { w: (bytes[i + 7] << 8) + bytes[i + 8], h: (bytes[i + 5] << 8) + bytes[i + 6] };
+                if (!len) break;
+                i += 2 + len;
+            }
+        }
+        return null;
+    }
+
+    async function decodeResizedBitmap(file, dimensions) {
+        if (typeof createImageBitmap !== "function" || !dimensions) return null;
+        const safe = safeWorkingSize(dimensions.w, dimensions.h);
+        if (!safe.scaled) return null;
+        showToast(`Preparing ${dimensions.w}×${dimensions.h} image at ${safe.w}×${safe.h}…`, "progress", 0);
+        const bitmap = await createImageBitmap(file, { resizeWidth: safe.w, resizeHeight: safe.h, resizeQuality: "high" });
+        const result = await decodedFrameToImage(bitmap, safe.w, safe.h);
+        return { ...result, sourceW: dimensions.w, sourceH: dimensions.h, scaled: true };
     }
 
     async function prepareImageFile(file) {
         if (!isImageFile(file)) throw new Error("Please choose a supported image file.");
         showToast(`Reading ${file.name}…`, "progress", 0);
+        const dimensions = await readImageDimensions(file);
+
+        try {
+            const resized = await decodeResizedBitmap(file, dimensions);
+            if (resized) return resized;
+        } catch (e) {
+            LOG("resized bitmap decode unavailable", e);
+        }
 
         if (typeof ImageDecoder === "function" && file.type) {
+            let decoder = null;
             try {
-                const decoder = new ImageDecoder({ data: await file.arrayBuffer(), type: file.type });
+                decoder = new ImageDecoder({ data: await file.arrayBuffer(), type: file.type });
                 await decoder.tracks.ready;
                 const track = decoder.tracks.selectedTrack;
                 const sourceW = track.codedWidth, sourceH = track.codedHeight;
                 const safe = safeWorkingSize(sourceW, sourceH);
                 showToast(safe.scaled ? `Preparing ${sourceW}×${sourceH} image at ${safe.w}×${safe.h}…` : `Decoding ${file.name}…`, "progress", 0);
                 const { image } = await decoder.decode({ desiredWidth: safe.w, desiredHeight: safe.h });
-                decoder.close?.();
                 const result = await decodedFrameToImage(image, safe.w, safe.h);
                 return { ...result, sourceW, sourceH, scaled: safe.scaled };
             } catch (e) {
                 LOG("native image decode unavailable; using browser fallback", e);
+            } finally {
+                decoder?.close?.();
             }
         }
 
@@ -1011,8 +1058,8 @@
         const ctx = canvas.getContext("2d");
         applyScaleAlgorithm(ctx, "high");
         ctx.drawImage(original, 0, 0, safe.w, safe.h);
-        const dataUrl = canvas.toDataURL("image/png");
-        return { dataUrl, img: await loadImage(dataUrl, "processed image"), sourceW: original.naturalWidth, sourceH: original.naturalHeight, scaled: true };
+        const result = await canvasToPreparedImage(canvas);
+        return { ...result, sourceW: original.naturalWidth, sourceH: original.naturalHeight, scaled: true };
     }
 
     async function createTemplateFromFile(file, lngLat) {
