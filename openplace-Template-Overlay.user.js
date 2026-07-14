@@ -3,7 +3,7 @@
 // @namespace    https://github.com/DaCrazyRaccoon/
 // @description  Drag-and-drop image template overlays for openplace, with responsive large-image editing, palette dithering, and grid-aligned resizing.
 // @license      MPL-2.0
-// @version      1.4.17
+// @version      1.4.18
 // @updateURL    https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/openplace-Template-Overlay.user.js
 // @downloadURL  https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/openplace-Template-Overlay.user.js
 // @homepageURL  https://github.com/DaCrazyRaccoon/openplace-template-tool
@@ -273,7 +273,7 @@
     }
 
     function saveSettings() {
-        rawSet(SETTINGS_KEY, JSON.stringify({ editMode, errorMode, gOutlineMode, gShrink, gEasyPaint, gHideCompleted, dlOutline, gPanStep, gColorSort, gMapScaleAlgorithm, gEditorScaleAlgorithm, gSelectedColorMode, selectedPaintColor, panelPosition, fabPosition }));
+        rawSet(SETTINGS_KEY, JSON.stringify({ editMode, errorMode, gOutlineMode, gShrink, gEasyPaint, gHideCompleted, dlOutline, gPanStep, gColorSort, gMapScaleAlgorithm, gEditorScaleAlgorithm, gSelectedColorMode, selectedPaintColor, panelPosition, fabPosition, panelOpen }));
     }
     async function loadSettings() {
         try {
@@ -297,6 +297,7 @@
             if (PALETTE_BY_INDEX[s.selectedPaintColor]) selectedPaintColor = s.selectedPaintColor;
             if (Number.isFinite(s.panelPosition?.left) && Number.isFinite(s.panelPosition?.top)) panelPosition = { left: s.panelPosition.left, top: s.panelPosition.top };
             if (Number.isFinite(s.fabPosition?.left) && Number.isFinite(s.fabPosition?.top)) fabPosition = { left: s.fabPosition.left, top: s.fabPosition.top };
+            if (typeof s.panelOpen === "boolean") panelOpen = s.panelOpen;
         } catch (e) {  }
     }
 
@@ -346,7 +347,7 @@
 
     let gMapScaleAlgorithm = "high", gEditorScaleAlgorithm = "high";
     let gSelectedColorMode = false;
-    let panelPosition = null, fabPosition = null;
+    let panelPosition = null, fabPosition = null, panelOpen = false;
 
     let lastPixel = null;
     let selectedPaintColor = null;
@@ -2012,16 +2013,17 @@
         fab.innerHTML = "🖼️";
         fab.addEventListener("click", () => {
             if (fab.dataset.dragged) { delete fab.dataset.dragged; return; }
-            const showing = panel.classList.contains("rtpl-hidden");
-            panel.classList.toggle("rtpl-hidden");
-            if (showing) clampPanelIntoView();
+            panelOpen = panel.classList.contains("rtpl-hidden");
+            panel.classList.toggle("rtpl-hidden", !panelOpen);
+            if (panelOpen) clampPanelIntoView();
+            saveSettings();
         });
         document.body.appendChild(fab);
         if (fabPosition) { setFloatingPosition(fab, fabPosition); clampFabIntoView(); }
         makeFabDraggable();
 
         panel = document.createElement("div");
-        panel.className = "rtpl-panel rtpl-hidden";
+        panel.className = "rtpl-panel" + (panelOpen ? "" : " rtpl-hidden");
         panel.innerHTML = `
             <div class="rtpl-top">
                 <div class="rtpl-head">
@@ -2095,11 +2097,12 @@
         `;
         document.body.appendChild(panel);
         if (panelPosition) setFloatingPosition(panel, panelPosition);
+        if (panelOpen) requestAnimationFrame(clampPanelIntoView);
         panelBody = panel.querySelector(".rtpl-list");
         accountBarEl = panel.querySelector(".rtpl-account");
         updateAccountBar();
 
-        panel.querySelector(".rtpl-x").addEventListener("click", () => panel.classList.add("rtpl-hidden"));
+        panel.querySelector(".rtpl-x").addEventListener("click", () => { panelOpen = false; panel.classList.add("rtpl-hidden"); saveSettings(); });
 
         const settings = panel.querySelector(".rtpl-settings");
         panel.querySelector(".rtpl-settings-head").addEventListener("click", () => {
