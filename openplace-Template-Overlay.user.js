@@ -3,7 +3,7 @@
 // @namespace    https://github.com/DaCrazyRaccoon/
 // @description  Drag-and-drop image template overlays for openplace, with responsive large-image editing, palette dithering, and grid-aligned resizing.
 // @license      MPL-2.0
-// @version      1.4.10
+// @version      1.4.11
 // @updateURL    https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/openplace-Template-Overlay.user.js
 // @downloadURL  https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/openplace-Template-Overlay.user.js
 // @homepageURL  https://github.com/DaCrazyRaccoon/openplace-template-tool
@@ -2095,7 +2095,7 @@
                 <input type="text" class="rtpl-tp-input" placeholder="Jump to tX tY X Y">
                 <div class="rtpl-tp-btns">
                     <button class="rtpl-toggle rtpl-tp-go" title="Go to coordinates">Go</button>
-                    <button class="rtpl-toggle rtpl-tp-pick" title="Put the last selected map pixel coordinates in the jump field and copy them">Copy selected coordinates</button>
+                    <button class="rtpl-toggle rtpl-tp-pick" title="Put the last selected map pixel coordinates in the jump field and copy them">Copy coordinates</button>
                 </div>
             </div>
             <div class="rtpl-tpl">
