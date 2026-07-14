@@ -3,7 +3,7 @@
 // @namespace    https://github.com/DaCrazyRaccoon/
 // @description  Drag-and-drop image template overlays for openplace, with responsive large-image editing, palette dithering, and grid-aligned resizing.
 // @license      MPL-2.0
-// @version      1.4.11
+// @version      1.4.12
 // @updateURL    https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/openplace-Template-Overlay.user.js
 // @downloadURL  https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/openplace-Template-Overlay.user.js
 // @homepageURL  https://github.com/DaCrazyRaccoon/openplace-template-tool
@@ -57,8 +57,8 @@
     const gpToTilePixel = (gpx, gpy) => {
         const tx = Math.floor(gpx / TILE_SIZE);
         const ty = Math.floor(gpy / TILE_SIZE);
-        const px = Math.floor(gpx - tx * TILE_SIZE);
-        const py = Math.floor(gpy - ty * TILE_SIZE);
+        const px = Math.floor(gpx - tx * TILE_SIZE) + 1;
+        const py = Math.floor(gpy - ty * TILE_SIZE) + 1;
         return { tx, ty, px, py };
     };
 
@@ -290,7 +290,7 @@
     }
 
     function saveSettings() {
-        rawSet(SETTINGS_KEY, JSON.stringify({ editMode, errorMode, gOutlineMode, gShrink, gEasyPaint, gHideCompleted, dlOutline, gPanStep, gColorSort, gMapScaleAlgorithm, gEditorScaleAlgorithm, gSelectedColorMode, selectedPaintColor }));
+        rawSet(SETTINGS_KEY, JSON.stringify({ editMode, errorMode, gOutlineMode, gShrink, gEasyPaint, gHideCompleted, dlOutline, gPanStep, gColorSort, gMapScaleAlgorithm, gEditorScaleAlgorithm, gSelectedColorMode, selectedPaintColor, panelPosition, fabPosition }));
     }
     async function loadSettings() {
         try {
@@ -312,6 +312,8 @@
             if (SCALE_ALGORITHMS.some(([v]) => v === s.gEditorScaleAlgorithm)) gEditorScaleAlgorithm = s.gEditorScaleAlgorithm;
             if (typeof s.gSelectedColorMode === "boolean") gSelectedColorMode = s.gSelectedColorMode;
             if (PALETTE_BY_INDEX[s.selectedPaintColor]) selectedPaintColor = s.selectedPaintColor;
+            if (Number.isFinite(s.panelPosition?.left) && Number.isFinite(s.panelPosition?.top)) panelPosition = { left: s.panelPosition.left, top: s.panelPosition.top };
+            if (Number.isFinite(s.fabPosition?.left) && Number.isFinite(s.fabPosition?.top)) fabPosition = { left: s.fabPosition.left, top: s.fabPosition.top };
         } catch (e) {  }
     }
 
@@ -363,6 +365,7 @@
 
     let gMapScaleAlgorithm = "high", gEditorScaleAlgorithm = "high";
     let gSelectedColorMode = false;
+    let panelPosition = null, fabPosition = null;
 
 
     let lastPixel = null;
@@ -1346,13 +1349,13 @@
         const m = String(str || "").match(/\d+/g);
         if (!m) return null;
         const n = m.map(Number);
-        let tx, ty, px = 0, py = 0;
+        let tx, ty, px = 1, py = 1;
         if (n.length >= 4) [tx, ty, px, py] = n;
         else if (n.length === 2) [tx, ty] = n;
         else return null;
         tx = clamp(tx, 0, TILE_COUNT - 1); ty = clamp(ty, 0, TILE_COUNT - 1);
-        px = clamp(px, 0, TILE_SIZE - 1); py = clamp(py, 0, TILE_SIZE - 1);
-        return { gx: tx * TILE_SIZE + px, gy: ty * TILE_SIZE + py };
+        px = clamp(px, 1, TILE_SIZE); py = clamp(py, 1, TILE_SIZE);
+        return { gx: tx * TILE_SIZE + px - 1, gy: ty * TILE_SIZE + py - 1 };
     }
 
 
@@ -2066,14 +2069,17 @@
 
         fab = document.createElement("button");
         fab.className = "rtpl-fab";
-        fab.title = "Templates";
+        fab.title = "Templates. Ctrl-drag to move; touch-drag on mobile.";
         fab.innerHTML = "🖼️";
         fab.addEventListener("click", () => {
+            if (fab.dataset.dragged) { delete fab.dataset.dragged; return; }
             const showing = panel.classList.contains("rtpl-hidden");
             panel.classList.toggle("rtpl-hidden");
             if (showing) clampPanelIntoView();
         });
         document.body.appendChild(fab);
+        if (fabPosition) { setFloatingPosition(fab, fabPosition); clampFabIntoView(); }
+        makeFabDraggable();
 
         panel = document.createElement("div");
         panel.className = "rtpl-panel rtpl-hidden";
@@ -2116,14 +2122,14 @@
                     <div class="rtpl-row3">
                         <label class="rtpl-num">C1 tile X<input type="number" class="rtpl-c1tx"></label>
                         <label class="rtpl-num">C1 tile Y<input type="number" class="rtpl-c1ty"></label>
-                        <label class="rtpl-num">C1 px X<input type="number" class="rtpl-c1px"></label>
-                        <label class="rtpl-num">C1 px Y<input type="number" class="rtpl-c1py"></label>
+                        <label class="rtpl-num">C1 px X<input type="number" class="rtpl-c1px" min="1" max="1000"></label>
+                        <label class="rtpl-num">C1 px Y<input type="number" class="rtpl-c1py" min="1" max="1000"></label>
                     </div>
                     <div class="rtpl-row3">
                         <label class="rtpl-num">C2 tile X<input type="number" class="rtpl-c2tx"></label>
                         <label class="rtpl-num">C2 tile Y<input type="number" class="rtpl-c2ty"></label>
-                        <label class="rtpl-num">C2 px X<input type="number" class="rtpl-c2px"></label>
-                        <label class="rtpl-num">C2 px Y<input type="number" class="rtpl-c2py"></label>
+                        <label class="rtpl-num">C2 px X<input type="number" class="rtpl-c2px" min="1" max="1000"></label>
+                        <label class="rtpl-num">C2 px Y<input type="number" class="rtpl-c2py" min="1" max="1000"></label>
                     </div>
                     <button class="rtpl-add rtpl-dl-go">Download PNG</button>
                 </div>
@@ -2149,6 +2155,7 @@
             </div>
         `;
         document.body.appendChild(panel);
+        if (panelPosition) setFloatingPosition(panel, panelPosition);
         panelBody = panel.querySelector(".rtpl-list");
         accountBarEl = panel.querySelector(".rtpl-account");
         updateAccountBar();
@@ -2257,7 +2264,7 @@
         });
 
         wireDownloadTool();
-        makeDraggable(panel, panel.querySelector(".rtpl-head"));
+        makeDraggable(panel, panel.querySelector(".rtpl-head"), () => { clampPanelIntoView(); panelPosition = floatingPosition(panel); saveSettings(); });
     }
 
 
@@ -2297,7 +2304,7 @@
         const v = (cls) => parseInt(panel.querySelector(`.rtpl-c${n}${cls}`).value);
         const tx = v("tx"), ty = v("ty"), px = v("px"), py = v("py");
         if ([tx, ty, px, py].some((x) => Number.isNaN(x))) return null;
-        return [tx * TILE_SIZE + px, ty * TILE_SIZE + py];
+        return [clamp(tx, 0, TILE_COUNT - 1) * TILE_SIZE + clamp(px, 1, TILE_SIZE) - 1, clamp(ty, 0, TILE_COUNT - 1) * TILE_SIZE + clamp(py, 1, TILE_SIZE) - 1];
     }
 
 
@@ -2356,26 +2363,52 @@
     }
 
 
-    function attachKeyboardPan() {
-        window.addEventListener("keydown", (e) => {
-            if (!map || e.ctrlKey || e.metaKey || e.altKey) return;
+    const keyboardPanKeys = new Set();
+    const keyboardPanCodes = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"]);
+    let keyboardPanFrame = 0, keyboardPanAt = 0;
 
-            if (editor && !editor.classList.contains("rtpl-hidden")) return;
-            const el = document.activeElement;
-            if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) return;
-            let dx = 0, dy = 0;
-            const k = e.key;
-            if (k === "w" || k === "W" || k === "ArrowUp") dy = -gPanStep;
-            else if (k === "s" || k === "S" || k === "ArrowDown") dy = gPanStep;
-            else if (k === "a" || k === "A" || k === "ArrowLeft") dx = -gPanStep;
-            else if (k === "d" || k === "D" || k === "ArrowRight") dx = gPanStep;
-            else return;
-            e.preventDefault();
-            e.stopPropagation();
-            map.panBy([dx, dy], { duration: 120 });
-        }, true);
+    function keyboardPanBlocked() {
+        if (!map || (editor && !editor.classList.contains("rtpl-hidden"))) return true;
+        const el = document.activeElement;
+        return !!(el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable));
     }
 
+    function stopKeyboardPan() {
+        keyboardPanKeys.clear();
+        if (keyboardPanFrame) cancelAnimationFrame(keyboardPanFrame);
+        keyboardPanFrame = 0;
+        keyboardPanAt = 0;
+    }
+
+    function runKeyboardPan(now) {
+        if (!keyboardPanKeys.size || keyboardPanBlocked()) { stopKeyboardPan(); return; }
+        const elapsed = Math.min(50, now - keyboardPanAt || 16.67);
+        keyboardPanAt = now;
+        const dx = (keyboardPanKeys.has("KeyD") || keyboardPanKeys.has("ArrowRight") ? 1 : 0) - (keyboardPanKeys.has("KeyA") || keyboardPanKeys.has("ArrowLeft") ? 1 : 0);
+        const dy = (keyboardPanKeys.has("KeyS") || keyboardPanKeys.has("ArrowDown") ? 1 : 0) - (keyboardPanKeys.has("KeyW") || keyboardPanKeys.has("ArrowUp") ? 1 : 0);
+        const length = Math.hypot(dx, dy);
+        if (length) {
+            const distance = gPanStep * 30 * elapsed / 1000;
+            map.panBy([dx / length * distance, dy / length * distance], { duration: 0 });
+        }
+        keyboardPanFrame = requestAnimationFrame(runKeyboardPan);
+    }
+
+    function attachKeyboardPan() {
+        window.addEventListener("keydown", (e) => {
+            if (!keyboardPanCodes.has(e.code) || e.ctrlKey || e.metaKey || e.altKey || keyboardPanBlocked()) return;
+            e.preventDefault();
+            e.stopPropagation();
+            keyboardPanKeys.add(e.code);
+            if (!keyboardPanFrame) { keyboardPanAt = performance.now(); keyboardPanFrame = requestAnimationFrame(runKeyboardPan); }
+        }, true);
+        window.addEventListener("keyup", (e) => {
+            if (!keyboardPanCodes.has(e.code)) return;
+            keyboardPanKeys.delete(e.code);
+            if (!keyboardPanKeys.size) stopKeyboardPan();
+        }, true);
+        window.addEventListener("blur", stopKeyboardPan);
+    }
     async function downloadArea() {
         const c1 = dlReadCorner(1), c2 = dlReadCorner(2);
         if (!c1 || !c2) { dlStatus("Enter or pick both corners first.", "error", 5000); return; }
@@ -2537,8 +2570,8 @@
                         <label class="rtpl-num">Y tile<input type="number" class="rtpl-ty" value="${ty}"></label>
                     </div>
                     <div class="rtpl-row3">
-                        <label class="rtpl-num">X px<input type="number" class="rtpl-px" min="0" max="999" value="${px}"></label>
-                        <label class="rtpl-num">Y px<input type="number" class="rtpl-py" min="0" max="999" value="${py}"></label>
+                        <label class="rtpl-num">X px<input type="number" class="rtpl-px" min="1" max="1000" value="${px}"></label>
+                        <label class="rtpl-num">Y px<input type="number" class="rtpl-py" min="1" max="1000" value="${py}"></label>
                     </div>
                     <div class="rtpl-row3">
                         <button class="rtpl-toggle rtpl-usepixel" title="Place this template's top-left at the last pixel you clicked on the map">Use selected pixel</button>
@@ -2620,10 +2653,10 @@
                 const applyPos = async () => {
                     const ntx = clamp(parseInt(card.querySelector(".rtpl-tx").value) || 0, 0, TILE_COUNT - 1);
                     const nty = clamp(parseInt(card.querySelector(".rtpl-ty").value) || 0, 0, TILE_COUNT - 1);
-                    const npx = clamp(parseInt(card.querySelector(".rtpl-px").value) || 0, 0, TILE_SIZE - 1);
-                    const npy = clamp(parseInt(card.querySelector(".rtpl-py").value) || 0, 0, TILE_SIZE - 1);
-                    t.gx = clamp(ntx * TILE_SIZE + npx, 0, WORLD_PIXELS - t.w);
-                    t.gy = clamp(nty * TILE_SIZE + npy, 0, WORLD_PIXELS - t.h);
+                    const npx = clamp(parseInt(card.querySelector(".rtpl-px").value) || 1, 1, TILE_SIZE);
+                    const npy = clamp(parseInt(card.querySelector(".rtpl-py").value) || 1, 1, TILE_SIZE);
+                    t.gx = clamp(ntx * TILE_SIZE + npx - 1, 0, WORLD_PIXELS - t.w);
+                    t.gy = clamp(nty * TILE_SIZE + npy - 1, 0, WORLD_PIXELS - t.h);
                     markGeometryChanged(t);
                     await updateTemplateTiles(t); updateOverlay(); storeSet();
                 };
@@ -2829,7 +2862,26 @@
 
     const escapeHtml = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
-    function makeDraggable(el, handle) {
+    function setFloatingPosition(el, position) {
+        el.style.left = `${Math.round(position.left)}px`;
+        el.style.top = `${Math.round(position.top)}px`;
+        el.style.right = "auto";
+        el.style.bottom = "auto";
+    }
+
+    function floatingPosition(el) {
+        const r = el.getBoundingClientRect();
+        return { left: r.left, top: r.top };
+    }
+
+    function clampFloatingElement(el) {
+        const r = el.getBoundingClientRect();
+        const left = Math.min(Math.max(0, r.left), Math.max(0, window.innerWidth - r.width));
+        const top = Math.min(Math.max(0, r.top), Math.max(0, window.innerHeight - r.height));
+        setFloatingPosition(el, { left, top });
+    }
+
+    function makeDraggable(el, handle, onEnd = null) {
         let sx, sy, ox, oy, dragging = false;
         handle.style.cursor = "move";
         handle.style.touchAction = "none";
@@ -2838,32 +2890,62 @@
             dragging = true;
             const r = el.getBoundingClientRect();
             ox = r.left; oy = r.top; sx = e.clientX; sy = e.clientY;
-
-            el.style.left = `${r.left}px`; el.style.top = `${r.top}px`;
-            el.style.right = "auto"; el.style.bottom = "auto";
+            setFloatingPosition(el, { left: ox, top: oy });
             try { handle.setPointerCapture(e.pointerId); } catch (_) {}
         });
         handle.addEventListener("pointermove", (e) => {
             if (!dragging) return;
             e.preventDefault();
-            el.style.left = `${ox + e.clientX - sx}px`;
-            el.style.top = `${oy + e.clientY - sy}px`;
+            setFloatingPosition(el, { left: ox + e.clientX - sx, top: oy + e.clientY - sy });
         });
-        const end = () => { dragging = false; };
+        const end = () => {
+            if (!dragging) return;
+            dragging = false;
+            onEnd?.();
+        };
         handle.addEventListener("pointerup", end);
         handle.addEventListener("pointercancel", end);
     }
 
-
-    function clampPanelIntoView() {
-        if (!panel) return;
-        const r = panel.getBoundingClientRect();
-        const left = Math.min(Math.max(0, r.left), Math.max(0, window.innerWidth - r.width));
-        const top = Math.min(Math.max(0, r.top), Math.max(0, window.innerHeight - r.height));
-        panel.style.left = `${left}px`; panel.style.top = `${top}px`;
-        panel.style.right = "auto"; panel.style.bottom = "auto";
+    function makeFabDraggable() {
+        let sx, sy, ox, oy, dragging = false, moved = false;
+        fab.style.touchAction = "none";
+        fab.addEventListener("pointerdown", (e) => {
+            if (e.button !== 0 || (e.pointerType === "mouse" && !e.ctrlKey)) return;
+            const r = fab.getBoundingClientRect();
+            sx = e.clientX; sy = e.clientY; ox = r.left; oy = r.top;
+            dragging = true; moved = false;
+            setFloatingPosition(fab, { left: ox, top: oy });
+            try { fab.setPointerCapture(e.pointerId); } catch (_) {}
+        });
+        fab.addEventListener("pointermove", (e) => {
+            if (!dragging) return;
+            const dx = e.clientX - sx, dy = e.clientY - sy;
+            if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
+            if (!moved) return;
+            e.preventDefault();
+            setFloatingPosition(fab, { left: ox + dx, top: oy + dy });
+        });
+        const end = () => {
+            if (!dragging) return;
+            dragging = false;
+            if (!moved) return;
+            clampFloatingElement(fab);
+            fabPosition = floatingPosition(fab);
+            fab.dataset.dragged = "1";
+            saveSettings();
+        };
+        fab.addEventListener("pointerup", end);
+        fab.addEventListener("pointercancel", end);
     }
 
+    function clampPanelIntoView() {
+        if (panel) clampFloatingElement(panel);
+    }
+
+    function clampFabIntoView() {
+        if (fab) clampFloatingElement(fab);
+    }
     function injectStyles() {
         const css = `
         .rtpl-fab{position:fixed;left:12px;bottom:12px;z-index:9998;width:44px;height:44px;border-radius:50%;
