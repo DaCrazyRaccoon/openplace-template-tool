@@ -3,7 +3,7 @@
 // @namespace    https://github.com/DaCrazyRaccoon/
 // @description  Drag-and-drop image template overlays for openplace, with responsive large-image editing, palette dithering, and grid-aligned resizing.
 // @license      MPL-2.0
-// @version      1.4.16
+// @version      1.4.17
 // @updateURL    https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/openplace-Template-Overlay.user.js
 // @downloadURL  https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/openplace-Template-Overlay.user.js
 // @homepageURL  https://github.com/DaCrazyRaccoon/openplace-template-tool
@@ -3221,6 +3221,19 @@
 
     let userPresets = [];
 
+    async function importEditorImage(file, pasted = false) {
+        const name = (file?.name || "pasted image").replace(/\.[^.]+$/, "") || "image";
+        try {
+            const prepared = await prepareImageFile(file);
+            await editorSetSource(prepared.dataUrl, name, null, prepared.img);
+            const action = pasted ? "Pasted" : "Loaded";
+            showToast(prepared.scaled ? `${action} “${name}” at ${prepared.img.naturalWidth}×${prepared.img.naturalHeight}.` : `${action} “${name}”.`, "success");
+        } catch (err) {
+            LOG(pasted ? "editor paste failed" : "editor import failed", err);
+            showToast(importError(file, err), "error", 7000);
+        }
+    }
+
     function buildEditor() {
         editor = document.createElement("div");
         editor.className = "rtpl-editor rtpl-hidden";
@@ -3299,14 +3312,17 @@
         editor.querySelector(".rtpl-ed-empty").addEventListener("click", () => { if (!editorState) fileInput.click(); });
         fileInput.addEventListener("change", async (e) => {
             const f = e.target.files[0];
-            if (f) {
-                try {
-                    const prepared = await prepareImageFile(f);
-                    await editorSetSource(prepared.dataUrl, f.name.replace(/\.[^.]+$/, ""), null, prepared.img);
-                    showToast(prepared.scaled ? `Loaded “${f.name}” at ${prepared.img.naturalWidth}×${prepared.img.naturalHeight}.` : `Loaded “${f.name}”.`, "success");
-                } catch (err) { LOG("editor import failed", err); showToast(importError(f, err), "error", 7000); }
-            }
+            if (f) await importEditorImage(f);
             fileInput.value = "";
+        });
+        window.addEventListener("paste", (e) => {
+            if (!editor || editor.classList.contains("rtpl-hidden")) return;
+            const items = [...(e.clipboardData?.items || [])];
+            const imageItem = items.find((item) => /^image\//.test(item.type));
+            const file = imageItem?.getAsFile() || [...(e.clipboardData?.files || [])].find(isImageFile);
+            if (!file) return;
+            e.preventDefault();
+            importEditorImage(file, true);
         });
         editor.querySelector(".rtpl-ed-preset").addEventListener("change", (e) => applyPresetValue(e.target.value));
         editor.querySelector(".rtpl-ed-preset-save").addEventListener("click", saveCurrentPreset);
