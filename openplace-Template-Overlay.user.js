@@ -3,7 +3,7 @@
 // @namespace    https://github.com/DaCrazyRaccoon/
 // @description  Drag-and-drop image template overlays for openplace, with responsive large-image editing, palette dithering, and grid-aligned resizing.
 // @license      MPL-2.0
-// @version      1.4.12
+// @version      1.4.13
 // @updateURL    https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/openplace-Template-Overlay.user.js
 // @downloadURL  https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/openplace-Template-Overlay.user.js
 // @homepageURL  https://github.com/DaCrazyRaccoon/openplace-template-tool
@@ -17,17 +17,14 @@
 // ==/UserScript==
 
 
-
 (() => {
     "use strict";
 
-    
     const TILE_COUNT = 2048;
     const TILE_SIZE = 1000;
     const ZOOM_LEVEL = 11;
     const N = Math.pow(2, ZOOM_LEVEL);
     const WORLD_PIXELS = TILE_COUNT * TILE_SIZE;
-
 
     const MAX_DL_DIM = 4000;
     const MAX_DL_PIXELS = 16_000_000;
@@ -37,10 +34,8 @@
 
     const LOG = (...a) => console.log("%c[Template]", "color:#3a86ff", ...a);
 
-
     const pageWin = (typeof unsafeWindow !== "undefined" && unsafeWindow) || window;
 
-    
     const gpxToLng = (gpx) => (gpx / TILE_SIZE) / N * 360 - 180;
     const gpyToLat = (gpy) => {
         const tileYFloat = (gpy / TILE_SIZE);
@@ -53,7 +48,6 @@
         return tileYFloat * TILE_SIZE;
     };
 
-
     const gpToTilePixel = (gpx, gpy) => {
         const tx = Math.floor(gpx / TILE_SIZE);
         const ty = Math.floor(gpy / TILE_SIZE);
@@ -62,7 +56,6 @@
         return { tx, ty, px, py };
     };
 
-    
     const PAID_PALETTE_INDEX = 32;
     const PALETTE = [
         ["Black",1,[0,0,0]],["Dark Gray",2,[60,60,60]],["Gray",3,[120,120,120]],
@@ -90,10 +83,8 @@
 
     const PALETTE_BY_INDEX = Object.fromEntries(PALETTE.map((c) => [c.index, c]));
 
-
     let userExtraColorsBitmap = 0;
     let userFetched = false;
-
 
     const isColorUnlocked = (index) => {
         if (index < PAID_PALETTE_INDEX) return true;
@@ -118,7 +109,6 @@
         return location.origin;
     };
 
-
     const me = { droplets: null, charges: null, max: null, cooldownMs: null, syncAt: 0 };
 
     async function fetchUserColors() {
@@ -140,7 +130,6 @@
             updateAccountBar();
         } catch (e) {  }
     }
-
 
     function estimatedCharges() {
         if (me.charges == null || me.max == null || !me.cooldownMs) return me.charges;
@@ -167,8 +156,6 @@
             `<span title="Time to full charges">⏳ ${fmtDuration(full)}</span>`;
     }
 
-    
-
     function templateTargetAt(gx, gy) {
         let inBounds = false, target = -1, correct = false;
         for (const t of templates) {
@@ -184,7 +171,6 @@
         return { inBounds, target, correct };
     }
 
-
     function easyPaintKeep(gx, gy, color) {
         const info = templateTargetAt(gx, gy);
         if (!info.inBounds) return true;
@@ -193,7 +179,6 @@
         if (info.correct) return false;
         return true;
     }
-
 
     function filterPaintBody(tx, ty, body) {
         const { colors, coords } = body;
@@ -209,13 +194,11 @@
         return { ...body, colors: nc, coords: nco };
     }
 
-
     let analysisRefreshTimer = null;
     function scheduleAnalysisRefresh() {
         clearTimeout(analysisRefreshTimer);
         analysisRefreshTimer = setTimeout(() => { try { autoAnalyzeTick(); } catch (e) {} }, 1500);
     }
-
 
     function setupPaintFilter() {
         if (pageWin.__rtplPaintHook) return;
@@ -258,7 +241,6 @@
         LOG("paint filter installed");
     }
 
-    
     const STORE_KEY = "rtpl_templates_v1";
     const SETTINGS_KEY = "rtpl_settings_v1";
     const PRESETS_KEY = "rtpl_presets_v1";
@@ -340,13 +322,11 @@
         colorUsageFor: t._usageFor
     });
 
-    
     let map = null;
-    
+
     let templates = [];
     let selectedId = null;
     let nextId = 1;
-
 
     let editMode = true;
     let errorMode = false;
@@ -366,7 +346,6 @@
     let gMapScaleAlgorithm = "high", gEditorScaleAlgorithm = "high";
     let gSelectedColorMode = false;
     let panelPosition = null, fabPosition = null;
-
 
     let lastPixel = null;
     let selectedPaintColor = null;
@@ -417,7 +396,6 @@
     const getTpl = (id) => templates.find((t) => t.id === id) || null;
     const selected = () => getTpl(selectedId);
 
-    
     const renderSig = (t) => {
         const selected = gSelectedColorMode && t.locked ? selectedPaintColor ?? "none" : "all";
         return `${gMapScaleAlgorithm}|${gOutlineMode}|${selected}|${(t.disabled || []).join(",")}`;
@@ -428,7 +406,6 @@
         if (!t._imgPromise) t._imgPromise = loadImage(t.dataUrl).then((im) => { t._imgEl = im; return im; });
         return t._imgPromise;
     }
-
 
     async function buildSourceImage(t) {
         const img = await ensureImg(t);
@@ -456,7 +433,6 @@
         t._procCanvas = pc; t._procSig = contentSig;
         return pc;
     }
-
 
     function applyOutline(d, w, h, mode) {
         const snap = new Uint8ClampedArray(d);
@@ -496,10 +472,8 @@
     const ERR_YELLOW = [255, 224, 0];
     const ERR_RED = [255, 40, 40];
 
-
     async function analyzeTemplate(t) {
         const img = await ensureImg(t);
-
 
         const tcv = document.createElement("canvas");
         tcv.width = t.w; tcv.height = t.h;
@@ -507,7 +481,6 @@
         tctx.imageSmoothingEnabled = false;
         tctx.drawImage(img, 0, 0, t.naturalW, t.naturalH, 0, 0, t.w, t.h);
         const td = scaledImageData(img, t.naturalW, t.naturalH, t.w, t.h, gMapScaleAlgorithm);
-
 
         const set = PALETTE;
         const ds = new Set(t.disabled || []);
@@ -521,10 +494,8 @@
             target[p] = c.index;
         }
 
-
         const { ctx } = await compositeRegion(t.gx, t.gy, t.w, t.h);
         const pd = ctx.getImageData(0, 0, t.w, t.h).data;
-
 
         const err = document.createElement("canvas");
         err.width = t.w; err.height = t.h;
@@ -564,7 +535,6 @@
         };
         return t._analysis;
     }
-
 
     const colorUsageSignature = (t) => gMapScaleAlgorithm + "|" + t.w + "x" + t.h;
 
@@ -640,14 +610,11 @@
         ctx.drawImage(src, 0, 0, sw, sh, 0, 0, dw, dh); return ctx.getImageData(0, 0, dw, dh).data;
     }
 
-    
-
     const tileBounds = (tx, ty) => {
         const left = gpxToLng(tx * TILE_SIZE), right = gpxToLng((tx + 1) * TILE_SIZE);
         const top = gpyToLat(ty * TILE_SIZE), bottom = gpyToLat((ty + 1) * TILE_SIZE);
         return [[left, top], [right, top], [right, bottom], [left, bottom]];
     };
-
 
     function refreshCanvasSource(id) {
         const s = map.getSource(id);
@@ -686,14 +653,11 @@
         t._dotTiles.clear();
     }
 
-
     const DOT_SCALE = SHRINK % 2 ? SHRINK : SHRINK + 1;
 
     const dotFits = (t) => Math.max(t.w, t.h) <= DOT_MAX_DIM / 2;
 
-
     const templateBeforeId = () => map.getLayer("openplace-hover-border") ? "openplace-hover-border" : undefined;
-
 
     function templateMode(t) {
         if (!map) return "hidden";
@@ -760,7 +724,6 @@
         });
     }
 
-
     function restackTemplates() {
         if (!map) return;
         const before = map.getLayer("openplace-hover-border") ? "openplace-hover-border" : undefined;
@@ -774,7 +737,6 @@
         }
     }
 
-
     function refreshTemplateModes() {
         if (!map) return;
         for (const t of templates) {
@@ -782,7 +744,6 @@
             if (m !== t._mode || m === "filled" || m === "err") updateTemplateTiles(t);
         }
     }
-
 
     const isPOT = (n) => n >= 1 && (n & (n - 1)) === 0;
 
@@ -794,7 +755,6 @@
             return d > 0 ? d : 1;
         } catch (e) { return 1; }
     }
-
 
     async function buildGridCanvas(t) {
         const sig = `${renderSig(t)}|${t.w}x${t.h}`;
@@ -820,7 +780,6 @@
         return g;
     }
 
-
     function downscaleData(img, sw, sh, dw, dh, algorithm = "high") {
         let cw = sw, ch = sh;
         let canvas = document.createElement("canvas");
@@ -840,7 +799,6 @@
         }
         return ctx.getImageData(0, 0, dw, dh).data;
     }
-
 
     async function renderFilledTiles(t, op, useErr, version) {
         const grid = useErr ? t._analysis.errorCanvas : await buildGridCanvas(t);
@@ -867,7 +825,6 @@
                 const key = `${tx}-${ty}`;
                 needed.add(key);
 
-
                 let cw = scaleDown ? Math.max(1, Math.floor(ow * sp)) : ow;
                 let ch = scaleDown ? Math.max(1, Math.floor(oh * sp)) : oh;
 
@@ -883,7 +840,6 @@
                     t._tiles.set(key, e);
                 }
 
-
                 const dimsChanged = e.cw !== cw || e.ch !== ch;
                 const rebuilt = fresh || e.sig !== sig || dimsChanged
                     || e.offX !== offX || e.offY !== offY || e.ow !== ow || e.oh !== oh;
@@ -895,12 +851,10 @@
                     e.sig = sig; e.cw = cw; e.ch = ch; e.offX = offX; e.offY = offY; e.ow = ow; e.oh = oh;
                 }
 
-
                 const coords = [
                     [gpxToLng(ix0), gpyToLat(iy0)], [gpxToLng(ix1), gpyToLat(iy0)],
                     [gpxToLng(ix1), gpyToLat(iy1)], [gpxToLng(ix0), gpyToLat(iy1)]
                 ];
-
 
                 if (fresh || dimsChanged || !map.getSource(e.sourceId)) {
                     if (map.getLayer(e.layerId)) map.removeLayer(e.layerId);
@@ -926,7 +880,6 @@
         }
     }
 
-
     async function buildDotGrid(t) {
         const sig = `${renderSig(t)}|${t.w}x${t.h}`;
         if (t._dotGrid && t._dotGridSig === sig) return t._dotGrid;
@@ -937,7 +890,6 @@
         t._dotGridSig = sig;
         return t._dotGrid;
     }
-
 
     async function renderDotLayer(t, op, version) {
         if (!t._dotTiles) t._dotTiles = new Map();
@@ -970,7 +922,6 @@
                     t._dotTiles.set(key, e);
                 }
 
-
                 const rebuilt = fresh || e.sig !== sig || e.ix0 !== ix0 || e.iy0 !== iy0 || e.ow !== ow || e.oh !== oh;
                 if (rebuilt) {
                     const cv = e.canvas || (e.canvas = document.createElement("canvas"));
@@ -992,7 +943,6 @@
                     e.sig = sig; e.ix0 = ix0; e.iy0 = iy0; e.offX = offX; e.offY = offY; e.ow = ow; e.oh = oh;
                 }
 
-
                 const coords = [
                     [gpxToLng(ix0), gpyToLat(iy0)], [gpxToLng(ix1), gpyToLat(iy0)],
                     [gpxToLng(ix1), gpyToLat(iy1)], [gpxToLng(ix0), gpyToLat(iy1)]
@@ -1012,7 +962,6 @@
             }
         }
 
-
         for (const [key, e] of [...t._dotTiles]) {
             if (needed.has(key)) continue;
             if (map.getLayer(e.layerId)) map.removeLayer(e.layerId);
@@ -1029,7 +978,6 @@
         removeDotLayer(t);
     }
 
-    
     const isImageFile = (f) => !!f && (/^image\//.test(f.type || "") || /\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(f.name || ""));
     function importError(f, e) { return `Couldn't import “${f?.name || "image"}”: ${e?.message || "unknown browser error"}`; }
 
@@ -1262,7 +1210,6 @@
         const naturalW = img.naturalWidth, naturalH = img.naturalHeight;
         const safe = safeWorkingSize(naturalW, naturalH);
 
-
         let gx, gy;
         if (Array.isArray(globalPosition) && Number.isFinite(globalPosition[0]) && Number.isFinite(globalPosition[1])) {
             gx = Math.round(globalPosition[0]);
@@ -1307,7 +1254,6 @@
 
     const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
-
     function resetTemplateCaches(t) {
         t._procCanvas = null; t._procSig = null;
         t._gridCanvas = null; t._gridSig = null;
@@ -1327,7 +1273,6 @@
         updateOverlay();
     }
 
-
     function goToTemplate(t) {
         if (!map) return;
         selectedId = t.id;
@@ -1340,10 +1285,7 @@
         updateOverlay();
     }
 
-    
-
     const coordString = (tx, ty, px, py) => `tX: ${tx} tY: ${ty} X: ${px} Y: ${py}`;
-
 
     function parseCoords(str) {
         const m = String(str || "").match(/\d+/g);
@@ -1358,9 +1300,7 @@
         return { gx: tx * TILE_SIZE + px - 1, gy: ty * TILE_SIZE + py - 1 };
     }
 
-
     const paintPanelOpen = () => !!document.querySelector(".palette-card");
-
 
     function selectPixelAfterMove(lng, lat) {
         let done = false;
@@ -1397,7 +1337,6 @@
             return ok;
         } catch (e) { return false; }
     }
-
 
     const SHARE_CODE_PREFIX = "OPTT1";
     const MAX_SHARE_CODE_CHARS = 50_000_000;
@@ -1669,17 +1608,14 @@
         if (ok) setTimeout(() => { if (statusMsg.startsWith("Copied:")) setStatus(""); }, 2000);
     }
 
-    
     const SVGNS = "http://www.w3.org/2000/svg";
     let overlayRoot = null, svg = null, fillPoly = null, outline = null;
     let handleEls = [];
     let labelEl = null;
 
-
     let dlPoly = null;
     let dlOutline = true;
     let dlC1 = null, dlC2 = null;
-
 
     const HANDLES = [
         { id: "tl", fx: "right", fy: "bottom", corner: true },
@@ -1713,6 +1649,7 @@
         fillPoly.setAttribute("fill", "rgba(0,0,0,0)");
         fillPoly.setAttribute("stroke", "none");
         fillPoly.style.cursor = "move";
+        fillPoly.style.touchAction = "none";
         svg.appendChild(fillPoly);
 
         outline = document.createElementNS(SVGNS, "polygon");
@@ -1721,7 +1658,6 @@
         outline.setAttribute("stroke-width", "2");
         outline.style.pointerEvents = "none";
         svg.appendChild(outline);
-
 
         dlPoly = document.createElementNS(SVGNS, "polygon");
         dlPoly.setAttribute("fill", "none");
@@ -1742,6 +1678,7 @@
             r.setAttribute("stroke-width", "2");
             r.dataset.handle = def.id;
             r.style.cursor = handleCursor(def.id);
+            r.style.touchAction = "none";
             svg.appendChild(r);
             handleEls.push({ def, el: r });
         }
@@ -1757,7 +1694,6 @@
         overlayRoot.appendChild(svg);
         overlayRoot.appendChild(labelEl);
         container.appendChild(overlayRoot);
-
 
         svg.addEventListener("wheel", (e) => {
             e.preventDefault();
@@ -1779,6 +1715,7 @@
         t: "ns-resize", b: "ns-resize", l: "ew-resize", r: "ew-resize"
     }[id] || "pointer");
 
+    const dragHandleSize = () => matchMedia("(pointer: coarse)").matches ? 28 : 16;
 
     function projGp(gx, gy) {
         const p = map.project([gpxToLng(gx), gpyToLat(gy)]);
@@ -1795,7 +1732,6 @@
         const showDl = !!(dlOutline && dlC1 && dlC2 && dlPoly);
 
         overlayRoot.style.display = (showBox || showDl) ? "block" : "none";
-
 
         if (dlPoly) {
             if (showDl) {
@@ -1828,22 +1764,23 @@
         outline.setAttribute("points", pts);
         fillPoly.setAttribute("points", pts);
 
-        fillPoly.style.pointerEvents = show ? "fill" : "none";
-
+        fillPoly.style.pointerEvents = show ? "all" : "none";
 
         const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
         const pos = {
             tl, tr, br, bl,
             t: mid(tl, tr), b: mid(bl, br), l: mid(tl, bl), r: mid(tr, br)
         };
+        const handleSize = dragHandleSize();
         for (const { def, el } of handleEls) {
             const p = pos[def.id];
-            el.setAttribute("x", p[0] - 8);
-            el.setAttribute("y", p[1] - 8);
+            el.setAttribute("width", handleSize);
+            el.setAttribute("height", handleSize);
+            el.setAttribute("x", p[0] - handleSize / 2);
+            el.setAttribute("y", p[1] - handleSize / 2);
             el.style.display = show ? "block" : "none";
             el.style.pointerEvents = show ? "auto" : "none";
         }
-
 
         const { tx, ty, px, py } = gpToTilePixel(t.gx, t.gy);
         labelEl.style.display = show ? "block" : "none";
@@ -1852,7 +1789,6 @@
         labelEl.style.top = `${Math.min(tl[1], tr[1]) - 22}px`;
     }
 
-    
     let drag = null;
 
     function clientToGp(clientX, clientY) {
@@ -1864,7 +1800,7 @@
     function attachPointerHandlers() {
         const onDown = (e) => {
             const t = selected();
-            if (!t || !editMode || t.locked) return;
+            if (!t || !editMode || t.locked || !e.isPrimary) return;
             const handle = e.target?.dataset?.handle;
             const isFill = e.target === fillPoly;
             if (!handle && !isFill) return;
@@ -1873,6 +1809,7 @@
             try { e.target.setPointerCapture(e.pointerId); } catch (_) {}
             const [pgx, pgy] = clientToGp(e.clientX, e.clientY);
             drag = {
+                pointerId: e.pointerId,
                 mode: handle ? "resize" : "move",
                 handle,
                 start: { gx: t.gx, gy: t.gy, w: t.w, h: t.h },
@@ -1881,10 +1818,11 @@
         };
 
         const onMove = (e) => {
-            if (!drag) return;
+            if (!drag || e.pointerId !== drag.pointerId) return;
             const t = selected();
             if (!t) return;
             e.preventDefault();
+            e.stopPropagation();
             const [pgx, pgy] = clientToGp(e.clientX, e.clientY);
             const dx = pgx - drag.pStart.gx;
             const dy = pgy - drag.pStart.gy;
@@ -1906,7 +1844,7 @@
         };
 
         const onUp = (e) => {
-            if (!drag) return;
+            if (!drag || e.pointerId !== drag.pointerId) return;
             const wasMoving = !!selected();
             drag = null;
             storeSet();
@@ -1921,9 +1859,9 @@
         };
 
         svg.addEventListener("pointerdown", onDown);
-        window.addEventListener("pointermove", onMove, { passive: false });
-        window.addEventListener("pointerup", onUp);
-        window.addEventListener("pointercancel", onUp);
+        svg.addEventListener("pointermove", onMove, { passive: false });
+        svg.addEventListener("pointerup", onUp);
+        svg.addEventListener("pointercancel", onUp);
     }
 
     function resizeFromHandle(t, d, pgx, pgy, shiftKey) {
@@ -1932,7 +1870,6 @@
         let left = s.gx, top = s.gy, right = s.gx + s.w, bottom = s.gy + s.h;
 
         let pX = Math.round(pgx), pY = Math.round(pgy);
-
 
         const movesX = def.fx ? "x" : null;
         const movesY = def.fy ? "y" : null;
@@ -1947,7 +1884,6 @@
         }
 
         let w = right - left, h = bottom - top;
-
 
         const ratio = s.w / s.h;
         if ((t.aspectLock || shiftKey) && def.corner) {
@@ -1966,7 +1902,6 @@
         if (safe.scaled) { t.w = safe.w; t.h = safe.h; }
     }
 
-    
     function attachDropHandlers() {
         const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
         const hasFiles = (e) => !!e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files");
@@ -2029,7 +1964,6 @@
         });
     }
 
-    
     let panel = null, panelBody = null, fab = null, statusMsg = "";
     let toastEl = null, toastTimer = null, toastId = 0, statusToastId = 0;
 
@@ -2178,7 +2112,6 @@
         panel.querySelector(".rtpl-openeditor").addEventListener("click", () => openEditor());
         panel.querySelector(".rtpl-importcode").addEventListener("click", showImportShareDialog);
 
-
         const tpInput = panel.querySelector(".rtpl-tp-input");
         const doTeleport = () => { if (teleportTo(tpInput.value)) tpInput.blur(); };
         panel.querySelector(".rtpl-tp-go").addEventListener("click", doTeleport);
@@ -2265,13 +2198,21 @@
 
         wireDownloadTool();
         makeDraggable(panel, panel.querySelector(".rtpl-head"), () => { clampPanelIntoView(); panelPosition = floatingPosition(panel); saveSettings(); });
+        let viewportClampQueued = false;
+        window.addEventListener("resize", () => {
+            if (viewportClampQueued) return;
+            viewportClampQueued = true;
+            requestAnimationFrame(() => {
+                viewportClampQueued = false;
+                clampFabIntoView();
+                if (!panel.classList.contains("rtpl-hidden")) clampPanelIntoView();
+            });
+        });
     }
-
 
     async function applyGlobalDisplayChange() {
         for (const t of templates) await updateTemplateTiles(t);
     }
-
 
     async function setErrorMode(on) {
         errorMode = on; saveSettings();
@@ -2288,7 +2229,6 @@
         renderPanel();
     }
 
-    
     let pickMode = 0;
 
     function dlSetCorner(n, gx, gy) {
@@ -2306,7 +2246,6 @@
         if ([tx, ty, px, py].some((x) => Number.isNaN(x))) return null;
         return [clamp(tx, 0, TILE_COUNT - 1) * TILE_SIZE + clamp(px, 1, TILE_SIZE) - 1, clamp(ty, 0, TILE_COUNT - 1) * TILE_SIZE + clamp(py, 1, TILE_SIZE) - 1];
     }
-
 
     function refreshDlOutline() {
         dlC1 = dlReadCorner(1);
@@ -2331,7 +2270,6 @@
         panel.querySelector(".rtpl-pick2").addEventListener("click", () => setPick(2));
         panel.querySelector(".rtpl-dl-go").addEventListener("click", downloadArea);
 
-
         for (const cls of ["c1tx", "c1ty", "c1px", "c1py", "c2tx", "c2ty", "c2px", "c2py"]) {
             panel.querySelector(`.rtpl-${cls}`).addEventListener("input", refreshDlOutline);
         }
@@ -2345,7 +2283,6 @@
             panel.querySelector(".rtpl-dl-caret").textContent = collapsed ? "▸" : "▾";
         });
     }
-
 
     function attachPickHandler() {
         map.on("click", (e) => {
@@ -2361,7 +2298,6 @@
             panel.querySelector(".rtpl-pick2").classList.remove("rtpl-active");
         });
     }
-
 
     const keyboardPanKeys = new Set();
     const keyboardPanCodes = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"]);
@@ -2435,7 +2371,6 @@
         }
     }
 
-
     async function compositeRegion(gx, gy, w, h) {
         const out = document.createElement("canvas");
         out.width = w; out.height = h;
@@ -2470,7 +2405,6 @@
         return { canvas: out, ctx: octx };
     }
 
-
     function renderPanelLight() {
         const t = selected();
         if (!t || !panelBody) return;
@@ -2482,7 +2416,6 @@
             dim.textContent = `${t.w}×${t.h}px · tile ${tx},${ty} px ${px},${py}`;
         }
     }
-
 
     function attachReorder(card, handle) {
         if (!handle) return;
@@ -2511,7 +2444,6 @@
             window.addEventListener("pointercancel", onUp);
         });
     }
-
 
     function commitReorderFromDom() {
         if (!panelBody) return;
@@ -2648,7 +2580,6 @@
                 await updateTemplateTiles(t); updateOverlay(); renderPanel(); storeSet();
             });
 
-
             if (!t.locked) {
                 const applyPos = async () => {
                     const ntx = clamp(parseInt(card.querySelector(".rtpl-tx").value) || 0, 0, TILE_COUNT - 1);
@@ -2677,7 +2608,6 @@
         }
     }
 
-
     async function refreshAnalysis(t, card) {
         const box = card?.querySelector(".rtpl-colors");
         const totalsEl = box?.querySelector(".rtpl-totals");
@@ -2693,7 +2623,6 @@
         if (card) renderColorList(t, card);
     }
 
-
     function markGeometryChanged(t) {
         t._analysis = null;
         queueColorUsage(t);
@@ -2704,11 +2633,9 @@
         }
     }
 
-    
     const AUTO_INTERVAL = 15_000;
     const AUTO_MAX_PIXELS = 6_000_000;
     let autoRunning = false;
-
 
     const cardOf = (t) => panelBody?.querySelector(`[data-card="${t.id}"]`) || null;
     function needsAnalysis(t) {
@@ -2743,7 +2670,6 @@
             : `<span class="rtpl-muted">Comparing…</span>`;
     };
 
-
     function applyAnalysisToCard(t, card) {
         const box = card?.querySelector(".rtpl-colors");
         if (!box || box.style.display === "none") return;
@@ -2762,7 +2688,6 @@
         }
     }
 
-
     function sortUsage(usage, a) {
         const arr = usage.slice();
         const remaining = (u) => { const pc = a?.perColor.get(u.index); return pc ? (pc.total - pc.correct) : u.count; };
@@ -2776,7 +2701,6 @@
         }
         return arr;
     }
-
 
     async function renderColorList(t, card) {
         const box = card.querySelector(".rtpl-colors");
@@ -3128,16 +3052,51 @@
         .rtpl-panel .rtpl-g-scale{min-width:0;flex:1;padding:4px 6px}
 
         .rtpl-panel .rtpl-info{border-color:#617388;color:#d1dbe6}
-        @media (max-width:600px){.rtpl-panel{width:calc(100vw - 24px);max-height:82vh}.rtpl-panel .rtpl-tpl,.rtpl-panel .rtpl-dl,.rtpl-panel .rtpl-settings{margin-left:10px;margin-right:10px}}
-        @media (max-width:600px){.rtpl-panel{width:calc(100vw - 24px)}.rtpl-ed-stage:not(.rtpl-mode-slider){flex-direction:column}}
+        @media (max-width:600px){
+            .rtpl-fab{width:48px;height:48px;font-size:21px}
+            .rtpl-panel{width:calc(100vw - 16px);max-width:calc(100vw - 16px);max-height:calc(100dvh - 16px);border-radius:12px;overscroll-behavior:contain}
+            .rtpl-panel .rtpl-tpl,.rtpl-panel .rtpl-dl,.rtpl-panel .rtpl-settings{margin-left:8px;margin-right:8px}
+            .rtpl-panel .rtpl-actions{padding-left:10px;padding-right:10px}
+            .rtpl-panel .rtpl-actions-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+            .rtpl-panel .rtpl-actions-row .rtpl-add{min-width:0;min-height:42px;padding:6px 4px;white-space:normal;font-size:11px;line-height:1.15}
+            .rtpl-panel .rtpl-tp-btns{gap:6px}
+            .rtpl-panel .rtpl-g-cmrow{flex-wrap:wrap}
+            .rtpl-editor{inset:8px;max-height:calc(100dvh - 16px);border-radius:10px}
+            .rtpl-ed-head{padding:10px;gap:8px;align-items:flex-start;flex-wrap:wrap;border-radius:10px 10px 0 0}
+            .rtpl-ed-title{width:100%;min-width:0}
+            .rtpl-ed-headbtns{width:100%;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+            .rtpl-ed-headbtns .rtpl-toggle,.rtpl-ed-headbtns .rtpl-x{min-width:0;padding:6px 3px;font-size:11px}
+            .rtpl-ed-zoomv{display:flex;align-items:center;justify-content:center;min-width:0;font-size:10px}
+            .rtpl-ed-controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:10px;align-items:stretch;overflow:auto}
+            .rtpl-ed-controls > *{min-width:0}
+            .rtpl-ed-ctl select,.rtpl-ed-ctl input{width:100%;box-sizing:border-box}
+            .rtpl-ed-import,.rtpl-ed-palbtn,.rtpl-ed-view{width:100%;min-height:36px}
+            .rtpl-ed-preset-save,.rtpl-ed-preset-del{align-self:stretch;padding:5px}
+            .rtpl-ed-resize{grid-column:1/-1;flex-wrap:wrap;gap:6px}
+            .rtpl-ed-resize .rtpl-ed-ctl{flex:1 1 calc(50% - 3px)}
+            .rtpl-ed-resize .rtpl-ed-w,.rtpl-ed-resize .rtpl-ed-h{width:100%}
+            .rtpl-ed-resize .rtpl-ed-x{display:none}
+            .rtpl-ed-lockaspect{flex:1 1 auto;padding-bottom:0}
+            .rtpl-ed-reset{flex:1 1 auto}
+            .rtpl-ed-view{grid-column:1/-1}
+            .rtpl-ed-apply{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-left:0}
+            .rtpl-ed-apply .rtpl-add{width:100%;min-width:0;padding:7px 4px;white-space:normal;font-size:11px;line-height:1.15}
+            .rtpl-ed-palette{padding:10px}
+            .rtpl-ed-palhead{flex-wrap:wrap}
+            .rtpl-ed-pal-search{order:1;flex-basis:100%}
+            .rtpl-ed-pal-grid{max-height:140px}
+            .rtpl-ed-palcell{width:calc(50% - 3px);min-width:0}
+            .rtpl-ed-stage{gap:8px;padding:8px}
+            .rtpl-ed-stage:not(.rtpl-mode-slider){flex-direction:column}
+            .rtpl-mode-slider .rtpl-ed-pane{inset:8px}
+            .rtpl-mode-slider .rtpl-ed-handle{top:8px;bottom:8px;left:calc(8px + (100% - 16px) * var(--split) / 100)}
+            .rtpl-toast{right:8px;bottom:max(8px,env(safe-area-inset-bottom));max-width:calc(100vw - 16px)}
+        }
         `;
         const style = document.createElement("style");
         style.textContent = css;
         document.head.appendChild(style);
     }
-
-    
-
 
     const grayIdx = [1, 2, 3, 32, 4, 5];
     const EDITOR_PRESETS = {
@@ -3149,7 +3108,6 @@
         rgb: { label: "RGB + black/white", get: () => PALETTE.filter((c) => [7, 13, 19, 1, 5].includes(c.index)) },
         cmyk: { label: "CMYK + black/white", get: () => PALETTE.filter((c) => [20, 27, 10, 1, 5].includes(c.index)) }
     };
-
 
     const DIFFUSION = {
         floyd: { div: 16, k: [[1, 0, 7], [-1, 1, 3], [0, 1, 5], [1, 1, 1]] },
@@ -3182,7 +3140,6 @@
         }
         return best;
     };
-
 
     function ditherTo(src, w, h, set, algo, strength, scaleAlgorithm) {
         const cv = document.createElement("canvas");
@@ -3223,7 +3180,6 @@
             return cv;
         }
 
-
         const rf = new Float32Array(w * h), gf = new Float32Array(w * h), bf = new Float32Array(w * h);
         for (let p = 0; p < w * h; p++) { rf[p] = d[p * 4]; gf[p] = d[p * 4 + 1]; bf[p] = d[p * 4 + 2]; }
         for (let y = 0; y < h; y++) {
@@ -3250,7 +3206,6 @@
         return cv;
     }
 
-    
     let editor = null;
     let editorState = null;
     let editorRedrawTimer = null;
@@ -3383,7 +3338,6 @@
             if (confirm("Replace the source template with this edited image? This overwrites the original and can't be undone.")) editorApply(true);
         });
 
-
         editor.querySelector(".rtpl-ed-zoomin").addEventListener("click", () => zoomAtPoint(editorState && editorState.zoom * 1.25));
         editor.querySelector(".rtpl-ed-zoomout").addEventListener("click", () => zoomAtPoint(editorState && editorState.zoom / 1.25));
         editor.querySelector(".rtpl-ed-fit").addEventListener("click", fitEditor);
@@ -3406,7 +3360,6 @@
             });
             attachEditorPan(w);
         }
-
 
         const wIn = editor.querySelector(".rtpl-ed-w");
         const hIn = editor.querySelector(".rtpl-ed-h");
@@ -3432,7 +3385,6 @@
             editorState.w = safe.w; editorState.h = safe.h; syncResizeInputs(); drawBefore(); deferredRedraw();
         });
 
-
         editor.querySelector(".rtpl-ed-view").addEventListener("click", (e) => {
             editorView = editorView === "side" ? "slider" : "side";
             applyEditorView(e.target);
@@ -3453,7 +3405,6 @@
         const b = btn || editor.querySelector(".rtpl-ed-view");
         b.textContent = slider ? "▥ Slider" : "⇆ Side by side";
     }
-
 
     function attachEditorPan(wrap) {
         let panning = false, sx, sy, sl, st;
@@ -3530,7 +3481,6 @@
         requestAnimationFrame(fitEditor);
     }
 
-
     function applyEditorZoom() {
         if (!editorState) return;
         editorState.zoom = clampZoom(editorState.zoom);
@@ -3547,7 +3497,6 @@
 
     const editorWrap = () => editor.querySelector(".rtpl-ed-pane-after .rtpl-ed-canwrap");
 
-
     function wrapAtPoint(clientX, clientY) {
         if (clientX != null) {
             for (const w of editor.querySelectorAll(".rtpl-ed-canwrap")) {
@@ -3558,7 +3507,6 @@
         return editorWrap();
     }
 
-
     function computeFitZoom() {
         if (!editorState) return null;
         const wrap = editorWrap();
@@ -3567,13 +3515,11 @@
         return Math.min(aw / editorState.w, ah / editorState.h) * 0.98;
     }
 
-
     function clampZoom(z) {
         const fit = computeFitZoom();
         const min = fit != null ? fit : 0.05;
         return Math.max(min, Math.min(64, z));
     }
-
 
     function fitEditor() {
         if (!editorState) return;
@@ -3582,7 +3528,6 @@
         editorState.zoom = fit;
         applyEditorZoom();
     }
-
 
     function zoomAtPoint(targetZoom, clientX, clientY) {
         if (!editorState || !targetZoom) return;
@@ -3610,7 +3555,6 @@
         if (ch1 > vh) ref.scrollTop = clamp(fracY * ch1 - cy, 0, ch1 - vh);
     }
 
-
     function drawBefore() {
         if (!editorState) return;
         const bc = editor.querySelector(".rtpl-ed-before");
@@ -3632,7 +3576,6 @@
         if (el) el.classList.toggle("rtpl-on", !!on);
     }
 
-
     function deferredRedraw() {
         if (!editorState) return;
         showEditorLoading(true);
@@ -3640,7 +3583,6 @@
             try { redrawEditor(); } finally { showEditorLoading(false); }
         }));
     }
-
 
     function populateEditorPalette() {
         const grid = editor.querySelector(".rtpl-ed-pal-grid");
@@ -3682,7 +3624,6 @@
         syncPaletteChecks(); updatePalCount(); updatePresetSelection(); deferredRedraw();
     }
 
-    
     const setKeyOf = (indices) => [...indices].map(Number).sort((a, b) => a - b).join(",");
     function presetOptionsHtml() {
         let h = Object.entries(EDITOR_PRESETS).map(([k, p]) => `<option value="b:${k}">${escapeHtml(p.label)}</option>`).join("");
@@ -3798,8 +3739,6 @@
         closeEditor();
     }
 
-    
-
     function waitForMap() {
         return new Promise((res) => {
             const check = () => {
@@ -3811,7 +3750,6 @@
             const iv = setInterval(() => { if (check()) clearInterval(iv); }, 250);
         });
     }
-
 
     function whenStyleReady(m) {
         return new Promise((res) => {
@@ -3868,7 +3806,6 @@
         templates.forEach(queueColorUsage);
         setStatus("Waiting for map…", "progress", 0);
 
-
         map = await waitForMap();
         LOG("map found, waiting for style…");
         await whenStyleReady(map);
@@ -3881,15 +3818,12 @@
         await reAddAllLayers();
         updateOverlay();
 
-
         fetchUserColors();
         setInterval(fetchUserColors, 60_000);
         setInterval(updateAccountBar, 1000);
 
-
         setInterval(autoAnalyzeTick, AUTO_INTERVAL);
         autoAnalyzeTick();
-
 
         let zoomDebounce = null;
         map.on("zoom", () => {
@@ -3897,10 +3831,8 @@
             zoomDebounce = setTimeout(refreshTemplateModes, 120);
         });
 
-
         map.on("style.load", () => { reAddAllLayers().then(updateOverlay); });
     }
-
 
     setupPaintFilter();
 
