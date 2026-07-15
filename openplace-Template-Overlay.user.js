@@ -3,7 +3,7 @@
 // @namespace    https://github.com/DaCrazyRaccoon/
 // @description  Drag-and-drop image template overlays for openplace, with responsive large-image editing, palette dithering, and grid-aligned resizing.
 // @license      MPL-2.0
-// @version      1.7.9
+// @version      1.7.10
 // @updateURL    https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/openplace-Template-Overlay.user.js
 // @downloadURL  https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/openplace-Template-Overlay.user.js
 // @homepageURL  https://github.com/DaCrazyRaccoon/openplace-template-tool
@@ -33,7 +33,7 @@
     const SCALE_ALGORITHMS = [["nearest","Nearest-neighbor (crisp)"],["low","Smooth — low quality"],["medium","Smooth — medium quality"],["high","Smooth — high quality"]];
 
     const LOG = (...a) => console.log("%c[Template]", "color:#3a86ff", ...a);
-    const SCRIPT_VERSION = "1.7.9";
+    const SCRIPT_VERSION = "1.7.10";
 
     const pageWin = (typeof unsafeWindow !== "undefined" && unsafeWindow) || window;
 
@@ -3434,7 +3434,7 @@
         .rtpl-share-dialog.rtpl-light>div,.rtpl-walk-root.rtpl-light>div{background:#f8fbff!important;color:#172033!important;border-color:#c4d0dd!important}
         .rtpl-share-dialog.rtpl-light input,.rtpl-share-dialog.rtpl-light div[style*="background"]{background:#fff!important;color:#172033!important;border-color:#c4d0dd!important}        .rtpl-panel.rtpl-light .rtpl-card,.rtpl-panel.rtpl-light .rtpl-tpl,.rtpl-panel.rtpl-light .rtpl-dl,.rtpl-panel.rtpl-light .rtpl-settings{background:#fff!important;color:#000!important;border-color:#c4d0dd!important}
         .rtpl-panel.rtpl-light .rtpl-tpl-head,.rtpl-panel.rtpl-light .rtpl-dl-head,.rtpl-panel.rtpl-light .rtpl-settings-head{background:#eef4fa!important;color:#000!important;border-color:#c4d0dd!important}
-        .rtpl-panel.rtpl-light .rtpl-dl-body,.rtpl-panel.rtpl-light .rtpl-globaltoggles{background:#fff!important;color:#000!important}        .rtpl-panel.rtpl-light .rtpl-actions-row .rtpl-add:first-child{background:#3a86ff!important;color:#000!important;border-color:#2873df!important}        .rtpl-panel.rtpl-light .rtpl-card.rtpl-sel{background:#dcecff!important;border-color:#1769c2!important;box-shadow:0 0 0 2px #1769c2 inset,0 0 0 1px #8fc2ff!important}        `;
+        .rtpl-panel.rtpl-light .rtpl-dl-body,.rtpl-panel.rtpl-light .rtpl-globaltoggles{background:#fff!important;color:#000!important}        .rtpl-panel.rtpl-light .rtpl-actions-row .rtpl-add:first-child{background:#3a86ff!important;color:#fff!important;border-color:#2873df!important}        .rtpl-panel.rtpl-light .rtpl-card.rtpl-sel{background:#dcecff!important;border-color:#1769c2!important;box-shadow:0 0 0 2px #1769c2 inset,0 0 0 1px #8fc2ff!important}        `;
         const style = document.createElement("style");
         style.textContent = css;
         document.head.appendChild(style);
