@@ -3,7 +3,7 @@
 // @namespace    https://github.com/DaCrazyRaccoon/
 // @description  Drag-and-drop image template overlays for openplace, with responsive large-image editing, palette dithering, and grid-aligned resizing.
 // @license      MPL-2.0
-// @version      1.6.1
+// @version      1.6.2
 // @updateURL    https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/openplace-Template-Overlay.user.js
 // @downloadURL  https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/openplace-Template-Overlay.user.js
 // @homepageURL  https://github.com/DaCrazyRaccoon/openplace-template-tool
@@ -33,7 +33,7 @@
     const SCALE_ALGORITHMS = [["nearest","Nearest-neighbor (crisp)"],["low","Smooth — low quality"],["medium","Smooth — medium quality"],["high","Smooth — high quality"]];
 
     const LOG = (...a) => console.log("%c[Template]", "color:#3a86ff", ...a);
-    const SCRIPT_VERSION = "1.6.1";
+    const SCRIPT_VERSION = "1.6.2";
 
     const pageWin = (typeof unsafeWindow !== "undefined" && unsafeWindow) || window;
 
@@ -813,30 +813,52 @@
         } catch (e) { return 1; }
     }
 
-    async function buildGridCanvas(t) {
-        const sig = `${renderSig(t)}|${t.w}x${t.h}`;
-        if (t._gridCanvas && t._gridSig === sig) return t._gridCanvas;
+    async function renderGridCanvas(t, onlyColor = null, includeOutline = true) {
         const img = await ensureImg(t);
-        const g = t._gridCanvas || (t._gridCanvas = document.createElement("canvas"));
+        const g = document.createElement("canvas");
         g.width = t.w; g.height = t.h;
         const gctx = g.getContext("2d", { willReadFrequently: true });
-
         const d = scaledImageData(img, t.naturalW, t.naturalH, t.w, t.h, gMapScaleAlgorithm);
-
         const ds = new Set(t.disabled || []);
-        const onlyColor = gSelectedColorMode && t.locked ? selectedPaintColor : null;
         for (let i = 0; i < d.length; i += 4) {
             if (d[i + 3] <= 128) { d[i + 3] = 0; continue; }
             const c = closestInSet(d[i], d[i + 1], d[i + 2], PALETTE);
             if (!c || ds.has(c.index) || (onlyColor != null && c.index !== onlyColor)) { d[i + 3] = 0; continue; }
             d[i] = c.rgb[0]; d[i + 1] = c.rgb[1]; d[i + 2] = c.rgb[2]; d[i + 3] = 255;
         }
-        if (gOutlineMode !== "off") applyOutline(d, t.w, t.h, gOutlineMode);
+        if (includeOutline && gOutlineMode !== "off") applyOutline(d, t.w, t.h, gOutlineMode);
         gctx.putImageData(new ImageData(d, t.w, t.h), 0, 0);
-        t._gridSig = sig;
         return g;
     }
 
+    async function buildGridCanvas(t) {
+        const sig = `${renderSig(t)}|${t.w}x${t.h}`;
+        if (t._gridCanvas && t._gridSig === sig) return t._gridCanvas;
+        const onlyColor = gSelectedColorMode && t.locked ? selectedPaintColor : null;
+        const grid = await renderGridCanvas(t, onlyColor);
+        t._gridCanvas = grid;
+        t._gridSig = sig;
+        return grid;
+    }
+
+    async function createSharePreview(t) {
+        const grid = await renderGridCanvas(t, null, false);
+        const scale = Math.min(1, 512 / Math.max(grid.width, grid.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(grid.width * scale));
+        canvas.height = Math.max(1, Math.round(grid.height * scale));
+        const ctx = canvas.getContext("2d");
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(grid, 0, 0, canvas.width, canvas.height);
+        return canvas.toDataURL("image/png");
+    }
+
+    async function sharedPreviewData(shared) {
+        if (typeof shared.r === "string" && /^data:image\/png;base64,/i.test(shared.r)) return shared.r;
+        const img = await loadImage(shared.d, "shared template preview");
+        const safe = safeWorkingSize(Number(shared.w) || img.naturalWidth, Number(shared.h) || img.naturalHeight);
+        return createSharePreview({ dataUrl: shared.d, naturalW: img.naturalWidth, naturalH: img.naturalHeight, w: safe.w, h: safe.h, disabled: Array.isArray(shared.x) ? shared.x : [], _imgEl: img });
+    }
     function downscaleData(img, sw, sh, dw, dh, algorithm = "high") {
         let cw = sw, ch = sh;
         let canvas = document.createElement("canvas");
@@ -1419,7 +1441,8 @@
     }
 
     async function createShareCode(t) {
-        const payload = { v: 2, n: t.name, d: t.dataUrl, w: t.w, h: t.h, o: t.opacity, a: t.aspectLock, x: t.disabled || [], p: [t.gx, t.gy] };
+        const preview = await createSharePreview(t);
+        const payload = { v: 3, n: t.name, d: t.dataUrl, r: preview, w: t.w, h: t.h, o: t.opacity, a: t.aspectLock, x: t.disabled || [], p: [t.gx, t.gy] };
         const bytes = new TextEncoder().encode(JSON.stringify(payload));
         if (typeof CompressionStream === "function") {
             const compressed = await transformShareBytes(bytes, CompressionStream);
@@ -1427,7 +1450,6 @@
         }
         return SHARE_CODE_PREFIX + "J." + bytesToShareText(bytes);
     }
-
     async function createShareIdentity(t) {
         const identity = { d: t.dataUrl, w: t.w, h: t.h, o: t.opacity, a: t.aspectLock, x: [...(t.disabled || [])].sort((a, b) => a - b), p: [t.gx, t.gy] };
         const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(identity)));
@@ -1444,7 +1466,7 @@
             bytes = await transformShareBytes(bytes, DecompressionStream);
         }
         const payload = JSON.parse(new TextDecoder().decode(bytes));
-        if (![1, 2].includes(payload?.v) || typeof payload.d !== "string" || !/^data:image\//i.test(payload.d)) throw new Error("This share code does not contain a valid template image.");
+        if (![1, 2, 3].includes(payload?.v) || typeof payload.d !== "string" || !/^data:image\//i.test(payload.d)) throw new Error("This share code does not contain a valid template image.");
         return payload;
     }
 
@@ -1616,7 +1638,8 @@
                     pendingShare = await previewShareCode(dialog.getCode());
                     const size = `${Math.max(1, Math.round(Number(pendingShare.w) || 0))}×${Math.max(1, Math.round(Number(pendingShare.h) || 0))} px`;
                     const position = Array.isArray(pendingShare.p) && Number.isFinite(pendingShare.p[0]) && Number.isFinite(pendingShare.p[1]) ? gpToTilePixel(pendingShare.p[0], pendingShare.p[1]) : null;
-                    dialog.previewImage.src = pendingShare.d;
+                    showToast("Preparing template preview…", "progress", 0);
+                    dialog.previewImage.src = await sharedPreviewData(pendingShare);
                     dialog.previewImage.alt = "Shared template preview";
                     dialog.previewText.textContent = `${String(pendingShare.n || "Shared template").slice(0, 120)}\n${size}${position ? `\nTile ${position.tx}, ${position.ty} · px ${position.px}, ${position.py}` : "\nNo saved location"}`;
                     dialog.preview.style.display = "flex";
@@ -1643,7 +1666,7 @@
             showToast("Share code cancelled.", "info");
             return;
         }
-        showToast("Preparing share code…", "progress", 0);
+        showToast("Preparing share preview…", "progress", 0);
         try {
             const payload = await createShareCode(t);
             const identity = await createShareIdentity(t);
