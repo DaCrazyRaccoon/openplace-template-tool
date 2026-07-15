@@ -3,7 +3,7 @@
 // @namespace    https://github.com/DaCrazyRaccoon/
 // @description  Drag-and-drop image template overlays for openplace, with responsive large-image editing, palette dithering, and grid-aligned resizing.
 // @license      MPL-2.0
-// @version      1.6.2
+// @version      1.6.4
 // @updateURL    https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/openplace-Template-Overlay.user.js
 // @downloadURL  https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/openplace-Template-Overlay.user.js
 // @homepageURL  https://github.com/DaCrazyRaccoon/openplace-template-tool
@@ -33,7 +33,7 @@
     const SCALE_ALGORITHMS = [["nearest","Nearest-neighbor (crisp)"],["low","Smooth — low quality"],["medium","Smooth — medium quality"],["high","Smooth — high quality"]];
 
     const LOG = (...a) => console.log("%c[Template]", "color:#3a86ff", ...a);
-    const SCRIPT_VERSION = "1.6.2";
+    const SCRIPT_VERSION = "1.6.4";
 
     const pageWin = (typeof unsafeWindow !== "undefined" && unsafeWindow) || window;
 
@@ -388,7 +388,8 @@
     function updateSelectedColorTemplates() {
         for (const t of templates) {
             if (!gSelectedColorMode || !t.locked) continue;
-            t._gridCanvas = null; t._gridSig = null; t._dotGrid = null; t._dotGridSig = null;
+            t._gridCanvas = null; t._gridSig = null;
+        t._mapPreview = null; t._mapPreviewSig = null; t._mapPreviewPromise = null; t._mapPreviewPromiseSig = null; t._dotGrid = null; t._dotGridSig = null;
             queueTemplateRender(t);
         }
     }
@@ -841,23 +842,68 @@
         return grid;
     }
 
-    async function createSharePreview(t) {
-        const grid = await renderGridCanvas(t, null, false);
-        const scale = Math.min(1, 512 / Math.max(grid.width, grid.height));
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.max(1, Math.round(grid.width * scale));
-        canvas.height = Math.max(1, Math.round(grid.height * scale));
-        const ctx = canvas.getContext("2d");
-        ctx.imageSmoothingEnabled = false;
-        ctx.drawImage(grid, 0, 0, canvas.width, canvas.height);
-        return canvas.toDataURL("image/png");
-    }
+    const mapPreviewSignature = (t) => `${gMapScaleAlgorithm}|${t.naturalW}x${t.naturalH}|${t.w}x${t.h}|${(t.disabled || []).join(",")}`;
 
+    async function createSharePreview(t) {
+        const sig = mapPreviewSignature(t);
+        if (t._mapPreview && t._mapPreviewSig === sig) return t._mapPreview;
+        if (t._mapPreviewPromise && t._mapPreviewPromiseSig === sig) return t._mapPreviewPromise;
+        const task = (async () => {
+            const grid = await renderGridCanvas(t, null, false);
+            const scale = Math.min(1, 512 / Math.max(grid.width, grid.height));
+            const canvas = document.createElement("canvas");
+            canvas.width = Math.max(1, Math.round(grid.width * scale));
+            canvas.height = Math.max(1, Math.round(grid.height * scale));
+            const ctx = canvas.getContext("2d");
+            ctx.imageSmoothingEnabled = false;
+            ctx.drawImage(grid, 0, 0, canvas.width, canvas.height);
+            const preview = canvas.toDataURL("image/png");
+            if (mapPreviewSignature(t) === sig) { t._mapPreview = preview; t._mapPreviewSig = sig; }
+            return preview;
+        })();
+        t._mapPreviewPromise = task;
+        t._mapPreviewPromiseSig = sig;
+        try { return await task; }
+        finally { if (t._mapPreviewPromise === task) { t._mapPreviewPromise = null; t._mapPreviewPromiseSig = null; } }
+    }
     async function sharedPreviewData(shared) {
         if (typeof shared.r === "string" && /^data:image\/png;base64,/i.test(shared.r)) return shared.r;
         const img = await loadImage(shared.d, "shared template preview");
         const safe = safeWorkingSize(Number(shared.w) || img.naturalWidth, Number(shared.h) || img.naturalHeight);
         return createSharePreview({ dataUrl: shared.d, naturalW: img.naturalWidth, naturalH: img.naturalHeight, w: safe.w, h: safe.h, disabled: Array.isArray(shared.x) ? shared.x : [], _imgEl: img });
+    }
+    let overlayPreviewQueue = [], overlayPreviewBusy = false;
+    const deferOverlayPreview = (fn) => {
+        if (typeof requestIdleCallback === "function") requestIdleCallback(fn, { timeout: 300 });
+        else setTimeout(fn, 40);
+    };
+
+    function queueOverlayPreview(t, image) {
+        if (!image) return;
+        const sig = mapPreviewSignature(t);
+        if (t._mapPreview && t._mapPreviewSig === sig) { image.src = t._mapPreview; return; }
+        if (!t._previewTargets) t._previewTargets = new Set();
+        t._previewTargets.add(image);
+        if (t._previewQueued) return;
+        t._previewQueued = true;
+        overlayPreviewQueue.push(t);
+        if (overlayPreviewBusy) return;
+        overlayPreviewBusy = true;
+        const next = async () => {
+            const template = overlayPreviewQueue.shift();
+            if (!template) { overlayPreviewBusy = false; return; }
+            try {
+                const preview = await createSharePreview(template);
+                for (const target of template._previewTargets || []) if (target.isConnected) target.src = preview;
+            } catch (e) { LOG("overlay preview failed", e); }
+            finally {
+                template._previewQueued = false;
+                template._previewTargets?.clear();
+                if (overlayPreviewQueue.length) deferOverlayPreview(next);
+                else overlayPreviewBusy = false;
+            }
+        };
+        deferOverlayPreview(next);
     }
     function downscaleData(img, sw, sh, dw, dh, algorithm = "high") {
         let cw = sw, ch = sh;
@@ -1334,6 +1380,7 @@
     function resetTemplateCaches(t) {
         t._procCanvas = null; t._procSig = null;
         t._gridCanvas = null; t._gridSig = null;
+        t._mapPreview = null; t._mapPreviewSig = null; t._mapPreviewPromise = null; t._mapPreviewPromiseSig = null;
         t._usage = null; t._usageFor = null;
         queueColorUsage(t);
         t._analysis = null;
@@ -1645,6 +1692,7 @@
                     dialog.preview.style.display = "flex";
                     dialog.subtitle.textContent = "Review the shared template before importing.";
                     dialog.primary.textContent = "Import template";
+                    showToast("Preview ready.", "success", 2200);
                     return;
                 }
                 await importSharedTemplate(pendingShare);
@@ -2657,7 +2705,7 @@
                     <span class="rtpl-drag" title="Drag to reorder — top of the list is painted on top of overlaps">⠿</span>
                     <button class="rtpl-caret" title="Minimize / expand">${t.collapsed ? "▸" : "▾"}</button>
                     <input type="checkbox" class="rtpl-vischk" ${t.visible ? "checked" : ""} title="Show / hide">
-                    <img class="rtpl-thumb" src="${t.dataUrl}" alt="">
+                    <img class="rtpl-thumb" alt="">
                     <div class="rtpl-meta">
                         <input class="rtpl-name" value="${escapeHtml(t.name)}">
                         <div class="rtpl-dim">${t.w}×${t.h}px · tile ${tx},${ty} px ${px},${py}</div>
@@ -2786,6 +2834,7 @@
             }
 
             panelBody.appendChild(card);
+            queueOverlayPreview(t, card.querySelector(".rtpl-thumb"));
             renderColorList(t, card);
         }
     }
