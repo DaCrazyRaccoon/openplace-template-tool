@@ -3,7 +3,7 @@
 // @namespace    https://github.com/DaCrazyRaccoon/
 // @description  Drag-and-drop image template overlays for openplace, with responsive large-image editing, palette dithering, and grid-aligned resizing.
 // @license      MPL-2.0
-// @version      1.6.4
+// @version      1.7.7
 // @updateURL    https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/openplace-Template-Overlay.user.js
 // @downloadURL  https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/openplace-Template-Overlay.user.js
 // @homepageURL  https://github.com/DaCrazyRaccoon/openplace-template-tool
@@ -33,7 +33,7 @@
     const SCALE_ALGORITHMS = [["nearest","Nearest-neighbor (crisp)"],["low","Smooth — low quality"],["medium","Smooth — medium quality"],["high","Smooth — high quality"]];
 
     const LOG = (...a) => console.log("%c[Template]", "color:#3a86ff", ...a);
-    const SCRIPT_VERSION = "1.6.4";
+    const SCRIPT_VERSION = "1.7.7";
 
     const pageWin = (typeof unsafeWindow !== "undefined" && unsafeWindow) || window;
 
@@ -273,7 +273,7 @@
         saveTimer = setTimeout(() => rawSet(STORE_KEY, JSON.stringify(templates.map(serialize))), 400);
     }
 
-    const settingsSnapshot = () => ({ editMode, errorMode, gOutlineMode, gShrink, gEasyPaint, gHideCompleted, dlOutline, gPanStep, gColorSort, gMapScaleAlgorithm, gEditorScaleAlgorithm, gSelectedColorMode, selectedPaintColor, panelPosition, fabPosition, panelOpen, performanceMode, walkthroughSeen, lastSeenVersion });
+    const settingsSnapshot = () => ({ editMode, errorMode, gOutlineMode, gShrink, gEasyPaint, gHideCompleted, dlOutline, gPanStep, gColorSort, gMapScaleAlgorithm, gEditorScaleAlgorithm, gSelectedColorMode, selectedPaintColor, panelPosition, fabPosition, panelOpen, performanceMode, walkthroughSeen, lastSeenVersion, uiTheme });
     function saveSettings() {
         rawSet(SETTINGS_KEY, JSON.stringify(settingsSnapshot()));
     }
@@ -303,6 +303,7 @@
             if (typeof s.performanceMode === "boolean") performanceMode = s.performanceMode;
             if (typeof s.walkthroughSeen === "boolean") walkthroughSeen = s.walkthroughSeen;
             if (typeof s.lastSeenVersion === "string") lastSeenVersion = s.lastSeenVersion;
+            if (s.uiTheme === "light" || s.uiTheme === "dark") uiTheme = s.uiTheme;
         } catch (e) {  }
     }
 
@@ -381,17 +382,56 @@
     let panelPosition = null, fabPosition = null, panelOpen = false;
     let performanceMode = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
     let walkthroughSeen = false, lastSeenVersion = "";
+    let uiTheme = "dark";
 
     let lastPixel = null;
     let selectedPaintColor = null;
 
-    function updateSelectedColorTemplates() {
-        for (const t of templates) {
-            if (!gSelectedColorMode || !t.locked) continue;
-            t._gridCanvas = null; t._gridSig = null;
-        t._mapPreview = null; t._mapPreviewSig = null; t._mapPreviewPromise = null; t._mapPreviewPromiseSig = null; t._dotGrid = null; t._dotGridSig = null;
-            queueTemplateRender(t);
+    function applyTheme() {
+        const light = uiTheme === "light";
+        for (const el of [panel, fab, editor, toastEl, shareDialog?.root, document.querySelector(".rtpl-walk-root")]) el?.classList.toggle("rtpl-light", light);
+        const button = panel?.querySelector(".rtpl-theme");
+        if (button) {
+            const nextTheme = light ? "dark" : "light";
+            button.textContent = light ? "☾" : "☀";
+            button.title = `Use ${nextTheme} theme`;
+            button.setAttribute("aria-label", `Use ${nextTheme} theme`);
         }
+    }
+    function setTheme(theme) {
+        uiTheme = theme === "light" ? "light" : "dark";
+        applyTheme();
+        saveSettings();
+    }
+    function templateInViewport(t) {
+        if (!map || !t?.visible || map.getZoom() < MIN_TEMPLATE_ZOOM) return false;
+        const canvas = map.getCanvas?.();
+        const scale = screenPerGlobalPx();
+        if (!canvas || !Number.isFinite(scale) || scale <= 0) return true;
+        const center = map.getCenter();
+        const centerX = lngToGpx(center.lng), centerY = latToGpy(center.lat);
+        const pad = TILE_SIZE;
+        const halfW = canvas.clientWidth / (2 * scale) + pad + t.w / 2;
+        const halfH = canvas.clientHeight / (2 * scale) + pad + t.h / 2;
+        return wrappedPixelDistance(t.gx + t.w / 2 - centerX) <= halfW
+            && Math.abs(t.gy + t.h / 2 - centerY) <= halfH;
+    }
+
+    const templateCanBackgroundWork = (t) => !!(t?.locked && templateInViewport(t));
+
+    const gridSignature = (t) => `${renderSig(t)}|${t.w}x${t.h}`;
+
+    function refreshViewportTemplateRenders() {
+        if (!map) return;
+        for (const t of templates) {
+            const inViewport = templateInViewport(t);
+            if (inViewport !== !!t._inViewport || (inViewport && t._gridSig !== gridSignature(t))) queueTemplateRender(t);
+        }
+    }
+
+    function updateSelectedColorTemplates() {
+        if (!map) return;
+        for (const t of templates) if (t.locked && templateInViewport(t)) queueTemplateRender(t);
     }
 
     function setSelectedPaintColor(index) {
@@ -511,7 +551,10 @@
     const ERR_RED = [255, 40, 40];
 
     async function analyzeTemplate(t) {
+        if (!templateCanBackgroundWork(t)) return null;
+        const workVersion = t._workVersion || 0;
         const img = await ensureImg(t);
+        if (!templateCanBackgroundWork(t) || workVersion !== (t._workVersion || 0)) return null;
 
         const tcv = document.createElement("canvas");
         tcv.width = t.w; tcv.height = t.h;
@@ -533,6 +576,7 @@
         }
 
         const { ctx } = await compositeRegion(t.gx, t.gy, t.w, t.h);
+        if (!templateCanBackgroundWork(t) || workVersion !== (t._workVersion || 0)) return null;
         const pd = ctx.getImageData(0, 0, t.w, t.h).data;
 
         const err = document.createElement("canvas");
@@ -578,11 +622,16 @@
 
     async function computeColorUsage(t) {
         const sig = colorUsageSignature(t);
+        const cached = () => t._usage && t._usageFor === sig ? t._usage : [];
+        if (!templateCanBackgroundWork(t)) return cached();
         if (t._usage && t._usageFor === sig) return t._usage;
         if (t._usageTask?.sig === sig) return t._usageTask.promise;
+        const workVersion = t._workVersion || 0;
         const task = (async () => {
             const img = await ensureImg(t);
+            if (!templateCanBackgroundWork(t) || workVersion !== (t._workVersion || 0)) return cached();
             const d = scaledImageData(img, t.naturalW, t.naturalH, t.w, t.h, gMapScaleAlgorithm);
+            if (!templateCanBackgroundWork(t) || workVersion !== (t._workVersion || 0)) return cached();
             const counts = new Map();
             for (let i = 0; i < d.length; i += 4) {
                 if (d[i + 3] <= 128) continue;
@@ -609,7 +658,7 @@
     let colorUsageRunning = false;
 
     function queueColorUsage(t) {
-        if (!t) return;
+        if (!templateCanBackgroundWork(t)) return;
         queuedColorUsage.add(t);
         if (colorUsageRunning) return;
         colorUsageRunning = true;
@@ -617,7 +666,7 @@
             const template = queuedColorUsage.values().next().value;
             queuedColorUsage.delete(template);
             try {
-                await computeColorUsage(template);
+                if (templateCanBackgroundWork(template)) await computeColorUsage(template);
             } catch (e) {
                 LOG("color count failed", e);
             } finally {
@@ -721,7 +770,7 @@
     const templateBeforeId = () => map.getLayer("openplace-hover-border") ? "openplace-hover-border" : undefined;
 
     function templateMode(t) {
-        if (!map) return "hidden";
+        if (!map || !t.visible || !templateInViewport(t)) return "hidden";
         const z = map.getZoom();
         if (z < MIN_TEMPLATE_ZOOM) return "hidden";
 
@@ -735,6 +784,8 @@
     async function updateTemplateTiles(t, version = t._renderVersion || 0) {
         if (!map) return;
         if (!t._tiles) t._tiles = new Map();
+        const inViewport = templateInViewport(t);
+        t._inViewport = inViewport;
         const op = t.visible ? t.opacity : 0;
         const mode = t._mode = templateMode(t);
 
@@ -1534,6 +1585,7 @@
     function requestShareProof() {
         return new Promise((resolve, reject) => {
             const root = document.createElement("div");
+
             const frame = document.createElement("iframe");
             const origin = new URL(SHARE_SERVICE_ORIGIN).origin;
             let settled = false;
@@ -1578,6 +1630,8 @@
     function getShareDialog() {
         if (shareDialog) return shareDialog;
         const root = document.createElement("div");
+        root.className = "rtpl-share-dialog";
+        root.classList.toggle("rtpl-light", uiTheme === "light");
         const box = document.createElement("div");
         const icon = document.createElement("div");
         const marker = document.createElement("div");
@@ -1906,9 +1960,8 @@
 
         if (dlPoly) {
             if (showDl) {
-                const minX = Math.min(dlC1[0], dlC2[0]), minY = Math.min(dlC1[1], dlC2[1]);
-                const maxX = Math.max(dlC1[0], dlC2[0]) + 1, maxY = Math.max(dlC1[1], dlC2[1]) + 1;
-                const a = projGp(minX, minY), b = projGp(maxX, minY), c = projGp(maxX, maxY), e = projGp(minX, maxY);
+                const selection = downloadSelection(dlC1, dlC2);
+                const a = projGp(selection.minX, selection.minY), b = projGp(selection.maxX + 1, selection.minY), c = projGp(selection.maxX + 1, selection.maxY + 1), e = projGp(selection.minX, selection.maxY + 1);
                 dlPoly.setAttribute("points", `${a[0]},${a[1]} ${b[0]},${b[1]} ${c[0]},${c[1]} ${e[0]},${e[1]}`);
                 dlPoly.style.display = "block";
             } else {
@@ -2149,7 +2202,7 @@
         const id = ++toastId;
         clearTimeout(toastTimer);
         toastEl.textContent = message;
-        toastEl.className = "rtpl-toast rtpl-toast-" + kind + " rtpl-toast-on";
+        toastEl.className = "rtpl-toast rtpl-toast-" + kind + " rtpl-toast-on" + (uiTheme === "light" ? " rtpl-light" : "");
         if (ms > 0) toastTimer = setTimeout(() => { if (id === toastId) toastEl?.classList.remove("rtpl-toast-on"); }, ms);
         return id;
     }
@@ -2192,7 +2245,7 @@
         ];
         let step = 0;
         const root = document.createElement("div");
-        root.className = "rtpl-walk-root";
+        root.className = "rtpl-walk-root" + (uiTheme === "light" ? " rtpl-light" : "");
         Object.assign(root.style, { position: "fixed", inset: "0", zIndex: "2147483647", display: "grid", placeItems: "center", padding: "16px", background: "rgba(0,0,0,.62)", color: "#eef3f8", font: "13px system-ui,sans-serif" });
         const box = document.createElement("div");
         Object.assign(box.style, { width: "min(440px,100%)", boxSizing: "border-box", padding: "22px", border: "1px solid #344150", borderRadius: "14px", background: "#10161c", boxShadow: "0 18px 48px #0009" });
@@ -2232,7 +2285,7 @@
             <div class="rtpl-top">
                 <div class="rtpl-head">
                     <span>Templates</span>
-                    <div class="rtpl-head-actions"><button class="rtpl-help" title="Show walkthrough" aria-label="Show walkthrough">?</button><button class="rtpl-x" title="Close">✕</button></div>
+                    <div class="rtpl-head-actions"><button class="rtpl-help" title="Show walkthrough" aria-label="Show walkthrough">?</button><button class="rtpl-theme" title="Use light theme" aria-label="Use light theme">☀</button><button class="rtpl-x" title="Close">✕</button></div>
                 </div>
                 <div class="rtpl-account" style="display:none"></div>
             </div>
@@ -2265,14 +2318,14 @@
                         <button class="rtpl-toggle rtpl-pick2">Pick corner 2</button>
                     </div>
                     <div class="rtpl-row3">
-                        <label class="rtpl-num">C1 tile X<input type="number" class="rtpl-c1tx"></label>
-                        <label class="rtpl-num">C1 tile Y<input type="number" class="rtpl-c1ty"></label>
+                        <label class="rtpl-num">C1 tile X<input type="number" class="rtpl-c1tx" min="0" max="2047"></label>
+                        <label class="rtpl-num">C1 tile Y<input type="number" class="rtpl-c1ty" min="0" max="2047"></label>
                         <label class="rtpl-num">C1 px X<input type="number" class="rtpl-c1px" min="1" max="1000"></label>
                         <label class="rtpl-num">C1 px Y<input type="number" class="rtpl-c1py" min="1" max="1000"></label>
                     </div>
                     <div class="rtpl-row3">
-                        <label class="rtpl-num">C2 tile X<input type="number" class="rtpl-c2tx"></label>
-                        <label class="rtpl-num">C2 tile Y<input type="number" class="rtpl-c2ty"></label>
+                        <label class="rtpl-num">C2 tile X<input type="number" class="rtpl-c2tx" min="0" max="2047"></label>
+                        <label class="rtpl-num">C2 tile Y<input type="number" class="rtpl-c2ty" min="0" max="2047"></label>
                         <label class="rtpl-num">C2 px X<input type="number" class="rtpl-c2px" min="1" max="1000"></label>
                         <label class="rtpl-num">C2 px Y<input type="number" class="rtpl-c2py" min="1" max="1000"></label>
                     </div>
@@ -2307,9 +2360,11 @@
         panelBody = panel.querySelector(".rtpl-list");
         accountBarEl = panel.querySelector(".rtpl-account");
         updateAccountBar();
+        applyTheme();
 
         panel.querySelector(".rtpl-x").addEventListener("click", () => { panelOpen = false; panel.classList.add("rtpl-hidden"); saveSettings(); });
         panel.querySelector(".rtpl-help").addEventListener("click", () => showWalkthrough(true));
+        panel.querySelector(".rtpl-theme").addEventListener("click", () => setTheme(uiTheme === "light" ? "dark" : "light"));
 
         const settings = panel.querySelector(".rtpl-settings");
         panel.querySelector(".rtpl-settings-head").addEventListener("click", () => {
@@ -2388,7 +2443,7 @@
             if (!performanceMode) autoAnalyzeTick();
             showToast(performanceMode ? "Performance mode enabled." : "Performance mode disabled.", "success");
         });
-        selectedColorCb.addEventListener("change", async (e) => {
+        selectedColorCb.addEventListener("change", (e) => {
             if (e.target.checked && selectedPaintColor == null) {
                 e.target.checked = false;
                 showToast("Select a color in the openplace palette first.", "info");
@@ -2396,7 +2451,7 @@
             }
             gSelectedColorMode = e.target.checked;
             saveSettings();
-            await applyGlobalDisplayChange();
+            updateSelectedColorTemplates();
         });
         easyCb.addEventListener("change", (e) => {
             gEasyPaint = e.target.checked; saveSettings();
@@ -2446,12 +2501,13 @@
 
     async function applyGlobalDisplayChange() {
         for (const t of templates) await updateTemplateTiles(t);
+        refreshViewportTemplateRenders();
     }
 
     async function setErrorMode(on) {
         errorMode = on; saveSettings();
         if (on) {
-            const pending = templates.filter((t) => t.visible && !t._analysis);
+            const pending = templates.filter((t) => templateCanBackgroundWork(t) && !t._analysis);
             for (let index = 0; index < pending.length; index++) {
                 setStatus(`Comparing template ${index + 1} of ${pending.length}…`, "progress", 0);
                 try { await analyzeTemplate(pending[index]); } catch (e) { LOG("analysis failed", e); }
@@ -2480,6 +2536,16 @@
         return [clamp(tx, 0, TILE_COUNT - 1) * TILE_SIZE + clamp(px, 1, TILE_SIZE) - 1, clamp(ty, 0, TILE_COUNT - 1) * TILE_SIZE + clamp(py, 1, TILE_SIZE) - 1];
     }
 
+    function downloadSelection(c1, c2) {
+        let x1 = c1[0], x2 = c2[0];
+        if (Math.abs(x2 - x1) > WORLD_PIXELS / 2) {
+            if (x1 < x2) x1 += WORLD_PIXELS;
+            else x2 += WORLD_PIXELS;
+        }
+        const minX = Math.min(x1, x2), minY = Math.min(c1[1], c2[1]);
+        const maxX = Math.max(x1, x2), maxY = Math.max(c1[1], c2[1]);
+        return { minX, minY, maxX, maxY, w: maxX - minX + 1, h: maxY - minY + 1 };
+    }
     function refreshDlOutline() {
         dlC1 = dlReadCorner(1);
         dlC2 = dlReadCorner(2);
@@ -2504,7 +2570,13 @@
         panel.querySelector(".rtpl-dl-go").addEventListener("click", downloadArea);
 
         for (const cls of ["c1tx", "c1ty", "c1px", "c1py", "c2tx", "c2ty", "c2px", "c2py"]) {
-            panel.querySelector(`.rtpl-${cls}`).addEventListener("input", refreshDlOutline);
+            const input = panel.querySelector(`.rtpl-${cls}`);
+            const isPixel = cls.endsWith("px") || cls.endsWith("py");
+            input.addEventListener("input", () => {
+                const value = Number(input.value);
+                if (Number.isFinite(value)) input.value = clamp(Math.trunc(value), isPixel ? 1 : 0, isPixel ? TILE_SIZE : TILE_COUNT - 1);
+                refreshDlOutline();
+            });
         }
         const outlineCb = panel.querySelector(".rtpl-dl-outline");
         outlineCb.checked = dlOutline;
@@ -2581,9 +2653,8 @@
     async function downloadArea() {
         const c1 = dlReadCorner(1), c2 = dlReadCorner(2);
         if (!c1 || !c2) { dlStatus("Enter or pick both corners first.", "error", 5000); return; }
-        const minX = Math.min(c1[0], c2[0]), minY = Math.min(c1[1], c2[1]);
-        const maxX = Math.max(c1[0], c2[0]), maxY = Math.max(c1[1], c2[1]);
-        const w = maxX - minX + 1, h = maxY - minY + 1;
+        const selection = downloadSelection(c1, c2);
+        const { minX, minY, w, h } = selection;
         if (w <= 0 || h <= 0) { dlStatus("Invalid area.", "error", 5000); return; }
         if (w > MAX_DL_DIM || h > MAX_DL_DIM) { dlStatus(`Area too big — max ${MAX_DL_DIM}px per side (this is ${w}×${h}).`); return; }
         if (w * h > MAX_DL_PIXELS) { dlStatus(`Area too large — max ${Math.round(MAX_DL_PIXELS / 1e6)}M pixels.`); return; }
@@ -2594,7 +2665,7 @@
             const blobUrl = canvas.toDataURL("image/png");
             const a = document.createElement("a");
             a.href = blobUrl;
-            const { tx: a1x, ty: a1y, px: p1x, py: p1y } = gpToTilePixel(minX, minY);
+            const { tx: a1x, ty: a1y, px: p1x, py: p1y } = gpToTilePixel(wrapHorizontal(minX), minY);
             a.download = `openplace_area_${a1x}-${a1y}-${p1x}-${p1y}_${w}x${h}.png`;
             a.click();
             dlStatus(`Saved ${w}×${h}px.`);
@@ -2781,9 +2852,18 @@
                 setTemplateOpacity(t);
                 storeSet();
             });
-            card.querySelector(".rtpl-vischk").addEventListener("change", (e) => {
+            card.querySelector(".rtpl-vischk").addEventListener("change", async (e) => {
                 t.visible = e.target.checked;
-                setTemplateOpacity(t);
+                t._workVersion = (t._workVersion || 0) + 1;
+                if (!t.visible) {
+                    queuedColorUsage.delete(t);
+                    t._analysis = null;
+                }
+                await updateTemplateTiles(t);
+                if (t.visible) {
+                    queueColorUsage(t);
+                    autoAnalyzeTick();
+                }
                 storeSet();
             });
             card.querySelector(".rtpl-lock").addEventListener("click", async () => {
@@ -2842,6 +2922,10 @@
     async function refreshAnalysis(t, card) {
         const box = card?.querySelector(".rtpl-colors");
         const totalsEl = box?.querySelector(".rtpl-totals");
+        if (!templateCanBackgroundWork(t)) {
+            if (totalsEl) totalsEl.textContent = "Show this template and move it into view to calculate progress.";
+            return;
+        }
         if (totalsEl) totalsEl.textContent = "Reading canvas…";
         try {
             await analyzeTemplate(t);
@@ -2856,6 +2940,7 @@
 
     function markGeometryChanged(t) {
         t._analysis = null;
+        t._workVersion = (t._workVersion || 0) + 1;
         queueColorUsage(t);
         if (errorMode && t.visible && t.w * t.h <= AUTO_MAX_PIXELS) {
             analyzeTemplate(t)
@@ -2870,13 +2955,11 @@
 
     const cardOf = (t) => panelBody?.querySelector(`[data-card="${t.id}"]`) || null;
     function needsAnalysis(t) {
-        if (t.w * t.h > AUTO_MAX_PIXELS) return false;
+        if (!templateCanBackgroundWork(t) || t.w * t.h > AUTO_MAX_PIXELS) return false;
         if (performanceMode && !gEasyPaint && !errorMode) return false;
-        if (errorMode && t.visible) return true;
-
-        if (gEasyPaint && t.visible) return true;
+        if (errorMode || gEasyPaint) return true;
         const panelOpen = panel && !panel.classList.contains("rtpl-hidden");
-        return !!(panelOpen && t.locked && !t.collapsed);
+        return !!(panelOpen && !t.collapsed);
     }
 
     async function autoAnalyzeTick() {
@@ -2960,7 +3043,9 @@
             <div class="rtpl-cl-list">Analyzing…</div>`;
 
         const a = t._analysis;
-        const usage = sortUsage(await computeColorUsage(t), a);
+        const canCalculate = templateCanBackgroundWork(t);
+        const cachedUsage = t._usageFor === colorUsageSignature(t) ? t._usage : [];
+        const usage = sortUsage(canCalculate ? await computeColorUsage(t) : cachedUsage || [], a);
         const disabled = new Set(t.disabled || []);
         const list = box.querySelector(".rtpl-cl-list");
 
@@ -2971,7 +3056,7 @@
             renderColorList(t, card);
         });
 
-        if (!usage.length) { list.textContent = "No opaque pixels."; return; }
+        if (!usage.length) { list.textContent = canCalculate ? "No opaque pixels." : "Show this template and move it into view to calculate colors."; return; }
         list.innerHTML = "";
         for (const u of usage) {
             const row = document.createElement("label");
@@ -3328,7 +3413,28 @@
             .rtpl-mode-slider .rtpl-ed-handle{top:8px;bottom:8px;left:calc(8px + (100% - 16px) * var(--split) / 100)}
             .rtpl-toast{right:8px;bottom:max(8px,env(safe-area-inset-bottom));max-width:calc(100vw - 16px)}
         }
-        `;
+        .rtpl-head-actions button:not(.rtpl-x){width:19px;height:19px;padding:0;border:1px solid #526171;border-radius:50%;background:transparent;color:#cbd6e2;cursor:pointer;font-size:12px;line-height:17px}
+        .rtpl-head-actions .rtpl-active{border-color:#4c93ff;background:#234a7f;color:#fff}
+        .rtpl-panel.rtpl-light,.rtpl-panel.rtpl-light *,.rtpl-editor.rtpl-light,.rtpl-editor.rtpl-light *{color:#000!important}
+        .rtpl-panel.rtpl-light button,.rtpl-editor.rtpl-light button,.rtpl-panel.rtpl-light select,.rtpl-editor.rtpl-light select,.rtpl-panel.rtpl-light input,.rtpl-editor.rtpl-light input{background:#fff!important;color:#000!important;border-color:#aebdcb!important}
+        .rtpl-panel.rtpl-light .rtpl-add,.rtpl-editor.rtpl-light .rtpl-add,.rtpl-panel.rtpl-light .rtpl-actions-row .rtpl-add:first-child,.rtpl-panel.rtpl-light .rtpl-actions-row .rtpl-add:last-child{background:#e8f2ff!important;color:#000!important;border-color:#88add5!important}
+        .rtpl-panel.rtpl-light .rtpl-toggle.rtpl-active{background:#d9eaff!important;color:#000!important;border-color:#6d9fd4!important}
+        .rtpl-panel.rtpl-light .rtpl-cl-sort,.rtpl-panel.rtpl-light .rtpl-cl-actions button{background:#fff!important;color:#000!important;border-color:#aebdcb!important}
+        .rtpl-panel.rtpl-light .rtpl-cl-sortrow,.rtpl-panel.rtpl-light .rtpl-cl-head,.rtpl-panel.rtpl-light .rtpl-cl-row,.rtpl-panel.rtpl-light .rtpl-cc,.rtpl-panel.rtpl-light .rtpl-muted,.rtpl-panel.rtpl-light .rtpl-hint,.rtpl-panel.rtpl-light .rtpl-dim{color:#000!important}        .rtpl-fab.rtpl-light,.rtpl-toast.rtpl-light,.rtpl-share-dialog.rtpl-light,.rtpl-share-dialog.rtpl-light *,.rtpl-walk-root.rtpl-light,.rtpl-walk-root.rtpl-light *{color:#000!important}        .rtpl-fab.rtpl-light{background:#f8fbff;color:#1d4f91;border:1px solid #b8c7d9}
+        .rtpl-toast.rtpl-light{background:#f8fbff;color:#172033;border-color:#c4d0dd}
+        .rtpl-panel.rtpl-light,.rtpl-editor.rtpl-light{color-scheme:light;background:#f8fbff;color:#172033;border-color:#c4d0dd;box-shadow:0 12px 32px rgba(30,55,80,.18)}
+        .rtpl-light .rtpl-top,.rtpl-light .rtpl-head,.rtpl-light .rtpl-account,.rtpl-light .rtpl-ed-head{background:#eef4fa;color:#172033;border-color:#c4d0dd}
+        .rtpl-light .rtpl-actions,.rtpl-light .rtpl-tpl,.rtpl-light .rtpl-settings,.rtpl-light .rtpl-ed-controls,.rtpl-light .rtpl-ed-palette{background:#f8fbff;color:#172033;border-color:#d4dee8}
+        .rtpl-light .rtpl-card,.rtpl-light .rtpl-toggle,.rtpl-light .rtpl-name,.rtpl-light .rtpl-num input,.rtpl-light .rtpl-tp-input,.rtpl-light .rtpl-g-cmrow select,.rtpl-light .rtpl-ed-ctl select,.rtpl-light .rtpl-ed-ctl input,.rtpl-light .rtpl-ed-pal-search,.rtpl-light .rtpl-ed-palcell{background:#fff;color:#172033;border-color:#c4d0dd}
+        .rtpl-light .rtpl-add{background:#eef5ff;color:#174a89;border-color:#79a7df}
+        .rtpl-light .rtpl-add:hover,.rtpl-light .rtpl-toggle:hover{background:#e1edf9}
+        .rtpl-light .rtpl-muted,.rtpl-light .rtpl-hint,.rtpl-light .rtpl-dim,.rtpl-light .rtpl-ed-ctl,.rtpl-light .rtpl-ed-after-info,.rtpl-light .rtpl-ed-zoomv{color:#516477}
+        .rtpl-light .rtpl-ed-stage,.rtpl-light .rtpl-ed-pane,.rtpl-light .rtpl-ed-canwrap{background:#e8eef5;border-color:#c4d0dd}
+        .rtpl-light .rtpl-ed-palcell.rtpl-on{background:#e5f4e7;color:#173d22;border-color:#55a463}
+        .rtpl-share-dialog.rtpl-light>div,.rtpl-walk-root.rtpl-light>div{background:#f8fbff!important;color:#172033!important;border-color:#c4d0dd!important}
+        .rtpl-share-dialog.rtpl-light input,.rtpl-share-dialog.rtpl-light div[style*="background"]{background:#fff!important;color:#172033!important;border-color:#c4d0dd!important}        .rtpl-panel.rtpl-light .rtpl-card,.rtpl-panel.rtpl-light .rtpl-tpl,.rtpl-panel.rtpl-light .rtpl-dl,.rtpl-panel.rtpl-light .rtpl-settings{background:#fff!important;color:#000!important;border-color:#c4d0dd!important}
+        .rtpl-panel.rtpl-light .rtpl-tpl-head,.rtpl-panel.rtpl-light .rtpl-dl-head,.rtpl-panel.rtpl-light .rtpl-settings-head{background:#eef4fa!important;color:#000!important;border-color:#c4d0dd!important}
+        .rtpl-panel.rtpl-light .rtpl-dl-body,.rtpl-panel.rtpl-light .rtpl-globaltoggles{background:#fff!important;color:#000!important}        `;
         const style = document.createElement("style");
         style.textContent = css;
         document.head.appendChild(style);
@@ -3532,6 +3638,7 @@
             </div>
         `;
         document.body.appendChild(editor);
+        applyTheme();
 
         editor.querySelector(".rtpl-ed-close").addEventListener("click", closeEditor);
         editor.querySelector(".rtpl-ed-full").addEventListener("click", () => {
@@ -4063,6 +4170,8 @@
         for (const t of templates) {
             t._tiles = new Map();
             t._dotTiles = new Map();
+            t._inViewport = false;
+            if (!templateInViewport(t)) continue;
             if (largeDotTemplate(t)) deferred.push(t);
             else await updateTemplateTiles(t);
         }
@@ -4123,6 +4232,7 @@
         attachPickHandler();
         attachKeyboardPan();
         await reAddAllLayers();
+        for (const t of templates) if (templateCanBackgroundWork(t)) queueColorUsage(t);
         updateOverlay();
 
         fetchUserColors();
@@ -4140,7 +4250,10 @@
         map.on("moveend", () => {
             clearTimeout(largeDotMoveDebounce);
             largeDotMoveDebounce = setTimeout(() => {
-                for (const t of templates) if (t._mode === "dots" && largeDotTemplate(t)) queueTemplateRender(t);
+                refreshViewportTemplateRenders();
+                for (const t of templates) if (t._mode === "dots" && largeDotTemplate(t) && templateInViewport(t)) queueTemplateRender(t);
+                for (const t of templates) if (templateCanBackgroundWork(t)) queueColorUsage(t);
+                autoAnalyzeTick();
             }, 100);
         });
 
