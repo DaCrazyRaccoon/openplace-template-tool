@@ -3,7 +3,7 @@
 // @namespace    https://github.com/DaCrazyRaccoon/
 // @description  Drag-and-drop image template overlays for openplace, with responsive large-image editing, palette dithering, and grid-aligned resizing.
 // @license      MPL-2.0
-// @version      1.7.12
+// @version      1.7.14
 // @updateURL    https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/openplace-Template-Overlay.user.js
 // @downloadURL  https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/openplace-Template-Overlay.user.js
 // @homepageURL  https://github.com/DaCrazyRaccoon/openplace-template-tool
@@ -33,7 +33,7 @@
     const SCALE_ALGORITHMS = [["nearest","Nearest-neighbor (crisp)"],["low","Smooth — low quality"],["medium","Smooth — medium quality"],["high","Smooth — high quality"]];
 
     const LOG = (...a) => console.log("%c[Template]", "color:#3a86ff", ...a);
-    const SCRIPT_VERSION = "1.7.12";
+    const SCRIPT_VERSION = "1.7.14";
 
     const pageWin = (typeof unsafeWindow !== "undefined" && unsafeWindow) || window;
 
@@ -417,7 +417,7 @@
             && Math.abs(t.gy + t.h / 2 - centerY) <= halfH;
     }
 
-    const templateCanBackgroundWork = (t) => !!(t?.locked && templateInViewport(t));
+    const templateCanBackgroundWork = (t) => !!(t?.locked && !map?.isMoving?.() && templateInViewport(t));
 
     const gridSignature = (t) => `${renderSig(t)}|${t.w}x${t.h}`;
 
@@ -782,7 +782,7 @@
     }
 
     async function updateTemplateTiles(t, version = t._renderVersion || 0) {
-        if (!map) return;
+        if (!map || t._deleted) return;
         if (!t._tiles) t._tiles = new Map();
         const inViewport = templateInViewport(t);
         t._inViewport = inViewport;
@@ -1145,9 +1145,22 @@
     function removeLayer(id) {
         if (!map) return;
         const t = getTpl(id);
-        if (!t) return;
-        removeFilledTiles(t);
-        removeDotLayer(t);
+        if (t) {
+            t._deleted = true;
+            t._renderVersion = (t._renderVersion || 0) + 1;
+            t._renderAgain = false;
+            removeFilledTiles(t);
+            removeDotLayer(t);
+        }
+        const layerPrefixes = [`rtpl-lyr-${id}-`, `rtpl-dot-lyr-${id}-`];
+        for (const layer of map.getStyle?.()?.layers || []) {
+            if (layerPrefixes.some((prefix) => layer.id.startsWith(prefix)) && map.getLayer(layer.id)) map.removeLayer(layer.id);
+        }
+        const sourcePrefixes = [`rtpl-src-${id}-`, `rtpl-dot-src-${id}-`];
+        for (const sourceId of Object.keys(map.getStyle?.()?.sources || {})) {
+            if (sourcePrefixes.some((prefix) => sourceId.startsWith(prefix)) && map.getSource(sourceId)) map.removeSource(sourceId);
+        }
+        map.triggerRepaint();
     }
 
     const isImageFile = (f) => !!f && (/^image\//.test(f.type || "") || /\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(f.name || ""));
@@ -1947,16 +1960,31 @@
         return [p.x, p.y];
     }
 
+    let overlayBoxVisible = false, overlayDownloadVisible = false;
+
     function updateOverlay() {
         if (!overlayRoot) return;
         const t = selected();
-
         const farAway = !!map && map.getZoom() < MIN_TEMPLATE_ZOOM;
         const showBox = !!t && editMode && !farAway && !t.locked;
         const show = showBox;
         const showDl = !!(dlOutline && dlC1 && dlC2 && dlPoly);
+        const visible = showBox || showDl;
 
-        overlayRoot.style.display = (showBox || showDl) ? "block" : "none";
+        if (!visible) {
+            if (!overlayBoxVisible && !overlayDownloadVisible) return;
+            overlayRoot.style.display = "none";
+            if (dlPoly) dlPoly.style.display = "none";
+            outline.style.display = "none";
+            fillPoly.style.pointerEvents = "none";
+            fillPoly.setAttribute("points", "");
+            labelEl.style.display = "none";
+            for (const { el } of handleEls) { el.style.display = "none"; el.style.pointerEvents = "none"; }
+            overlayBoxVisible = false;
+            overlayDownloadVisible = false;
+            return;
+        }
+        overlayRoot.style.display = "block";
 
         if (dlPoly) {
             if (showDl) {
@@ -1964,20 +1992,24 @@
                 const a = projGp(selection.minX, selection.minY), b = projGp(selection.maxX + 1, selection.minY), c = projGp(selection.maxX + 1, selection.maxY + 1), e = projGp(selection.minX, selection.maxY + 1);
                 dlPoly.setAttribute("points", `${a[0]},${a[1]} ${b[0]},${b[1]} ${c[0]},${c[1]} ${e[0]},${e[1]}`);
                 dlPoly.style.display = "block";
-            } else {
+                overlayDownloadVisible = true;
+            } else if (overlayDownloadVisible) {
                 dlPoly.style.display = "none";
+                overlayDownloadVisible = false;
             }
         }
 
         if (!showBox) {
-
+            if (!overlayBoxVisible) return;
             outline.style.display = "none";
             fillPoly.style.pointerEvents = "none";
             fillPoly.setAttribute("points", "");
             labelEl.style.display = "none";
             for (const { el } of handleEls) { el.style.display = "none"; el.style.pointerEvents = "none"; }
+            overlayBoxVisible = false;
             return;
         }
+        overlayBoxVisible = true;
         outline.style.display = "block";
 
         const tl = projGp(t.gx, t.gy);
@@ -2629,7 +2661,7 @@
         const dy = (keyboardPanKeys.has("KeyS") || keyboardPanKeys.has("ArrowDown") ? 1 : 0) - (keyboardPanKeys.has("KeyW") || keyboardPanKeys.has("ArrowUp") ? 1 : 0);
         const length = Math.hypot(dx, dy);
         if (length) {
-            const distance = gPanStep * 30 * elapsed / 1000;
+            const distance = Math.min(36, gPanStep * 18 * elapsed / 1000);
             map.panBy([dx / length * distance, dy / length * distance], { duration: 0 });
         }
         keyboardPanFrame = requestAnimationFrame(runKeyboardPan);
@@ -4242,19 +4274,30 @@
         setInterval(autoAnalyzeTick, AUTO_INTERVAL);
         autoAnalyzeTick();
 
-        let zoomDebounce = null, largeDotMoveDebounce = null;
+        let zoomDebounce = null, viewportRenderTimer = null, viewportWorkTimer = null, viewportWorkVersion = 0;
         map.on("zoom", () => {
             clearTimeout(zoomDebounce);
             zoomDebounce = setTimeout(refreshTemplateModes, 120);
         });
+        map.on("movestart", () => {
+            viewportWorkVersion++;
+            clearTimeout(viewportRenderTimer);
+            clearTimeout(viewportWorkTimer);
+        });
         map.on("moveend", () => {
-            clearTimeout(largeDotMoveDebounce);
-            largeDotMoveDebounce = setTimeout(() => {
+            const version = viewportWorkVersion;
+            clearTimeout(viewportRenderTimer);
+            clearTimeout(viewportWorkTimer);
+            viewportRenderTimer = setTimeout(() => {
+                if (version !== viewportWorkVersion || map.isMoving?.()) return;
                 refreshViewportTemplateRenders();
                 for (const t of templates) if (t._mode === "dots" && largeDotTemplate(t) && templateInViewport(t)) queueTemplateRender(t);
+            }, 120);
+            viewportWorkTimer = setTimeout(() => {
+                if (version !== viewportWorkVersion || map.isMoving?.()) return;
                 for (const t of templates) if (templateCanBackgroundWork(t)) queueColorUsage(t);
                 autoAnalyzeTick();
-            }, 100);
+            }, 450);
         });
 
         map.on("style.load", () => { reAddAllLayers().then(updateOverlay); });
