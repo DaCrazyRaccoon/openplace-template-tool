@@ -3,7 +3,7 @@
 // @namespace    https://github.com/DaCrazyRaccoon/
 // @description  Drag-and-drop image template overlays for openplace, with responsive large-image editing, palette dithering, and grid-aligned resizing.
 // @license      MPL-2.0
-// @version      1.7.14
+// @version      1.8.5
 // @updateURL    https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/openplace-Template-Overlay.user.js
 // @downloadURL  https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/openplace-Template-Overlay.user.js
 // @homepageURL  https://github.com/DaCrazyRaccoon/openplace-template-tool
@@ -33,7 +33,24 @@
     const SCALE_ALGORITHMS = [["nearest","Nearest-neighbor (crisp)"],["low","Smooth — low quality"],["medium","Smooth — medium quality"],["high","Smooth — high quality"]];
 
     const LOG = (...a) => console.log("%c[Template]", "color:#3a86ff", ...a);
-    const SCRIPT_VERSION = "1.7.14";
+    const SCRIPT_VERSION = "1.8.5";
+    const CHANGELOG = [
+        { version: "1.8.5", changes: [["Reworked", "Walkthrough keyboard guidance."]] },
+        { version: "1.8.4", changes: [["Removed", "Edit mode setting."], ["Reworked", "Unlocked templates are always editable."], ["Reworked", "Archived template actions."]] },
+        { version: "1.8.3", changes: [["Fixed", "Ruler import error."]] },
+        { version: "1.8.2", changes: [["Added", "Versioned changelog panel."], ["Reworked", "Release notes use four simple categories."]] },
+        { version: "1.8.1", changes: [["Added", "Difference-only view."], ["Added", "Opacity and template hotkeys."], ["Added", "Map ruler and template archive."]] },
+        { version: "1.7.14", changes: [["Fixed", "Smoother map movement work."]] },
+        { version: "1.7.13", changes: [["Fixed", "Deleted templates lingering on the map."]] },
+        { version: "1.7.12", changes: [["Reworked", "Light-mode control styling."]] },
+        { version: "1.7.7", changes: [["Fixed", "Light-mode section styling."]] },
+        { version: "1.7.4", changes: [["Reworked", "Viewport-based template processing."]] },
+        { version: "1.6.3", changes: [["Fixed", "Static share-preview loading feedback."]] },
+        { version: "1.6.0", changes: [["Fixed", "Large-template small-pixel rendering."]] },
+        { version: "1.5.4", changes: [["Reworked", "Lock and share controls."]] },
+        { version: "1.5.0", changes: [["Added", "Editor transforms, backups, walkthrough, and update notices."]] },
+        { version: "1.4.5", changes: [["Added", "Baseline public release."]] }
+    ];
 
     const pageWin = (typeof unsafeWindow !== "undefined" && unsafeWindow) || window;
 
@@ -160,7 +177,7 @@
     function templateTargetAt(gx, gy) {
         let inBounds = false, target = -1, correct = false;
         for (const t of templates) {
-            if (!t.visible) continue;
+            if (!t.visible || t.archived) continue;
             const a = t._analysis;
             if (!a || !a.target) continue;
             const wrappedX = unwrapHorizontalNear(gx, a.gx + a.w / 2);
@@ -273,7 +290,7 @@
         saveTimer = setTimeout(() => rawSet(STORE_KEY, JSON.stringify(templates.map(serialize))), 400);
     }
 
-    const settingsSnapshot = () => ({ editMode, errorMode, gOutlineMode, gShrink, gEasyPaint, gHideCompleted, dlOutline, gPanStep, gColorSort, gMapScaleAlgorithm, gEditorScaleAlgorithm, gSelectedColorMode, selectedPaintColor, panelPosition, fabPosition, panelOpen, performanceMode, walkthroughSeen, lastSeenVersion, uiTheme });
+    const settingsSnapshot = () => ({ errorMode, gOutlineMode, gShrink, gEasyPaint, gHideCompleted, dlOutline, gPanStep, gColorSort, gMapScaleAlgorithm, gEditorScaleAlgorithm, gSelectedColorMode, selectedPaintColor, archiveExpanded, panelPosition, fabPosition, panelOpen, performanceMode, walkthroughSeen, lastSeenVersion, uiTheme });
     function saveSettings() {
         rawSet(SETTINGS_KEY, JSON.stringify(settingsSnapshot()));
     }
@@ -282,7 +299,6 @@
             const v = await rawGet(SETTINGS_KEY);
             if (!v) return;
             const s = JSON.parse(v);
-            if (typeof s.editMode === "boolean") editMode = s.editMode;
             if (typeof s.errorMode === "boolean") errorMode = s.errorMode;
             if (OUTLINE_MODES.includes(s.gOutlineMode)) gOutlineMode = s.gOutlineMode;
             if (typeof s.gShrink === "boolean") gShrink = s.gShrink;
@@ -297,6 +313,7 @@
             if (SCALE_ALGORITHMS.some(([v]) => v === s.gEditorScaleAlgorithm)) gEditorScaleAlgorithm = s.gEditorScaleAlgorithm;
             if (typeof s.gSelectedColorMode === "boolean") gSelectedColorMode = s.gSelectedColorMode;
             if (PALETTE_BY_INDEX[s.selectedPaintColor]) selectedPaintColor = s.selectedPaintColor;
+            if (typeof s.archiveExpanded === "boolean") archiveExpanded = s.archiveExpanded;
             if (Number.isFinite(s.panelPosition?.left) && Number.isFinite(s.panelPosition?.top)) panelPosition = { left: s.panelPosition.left, top: s.panelPosition.top };
             if (Number.isFinite(s.fabPosition?.left) && Number.isFinite(s.fabPosition?.top)) fabPosition = { left: s.fabPosition.left, top: s.fabPosition.top };
             if (typeof s.panelOpen === "boolean") panelOpen = s.panelOpen;
@@ -325,7 +342,7 @@
         naturalW: t.naturalW, naturalH: t.naturalH,
         gx: t.gx, gy: t.gy, w: t.w, h: t.h,
         opacity: t.opacity, visible: t.visible, locked: t.locked,
-        aspectLock: t.aspectLock, disabled: t.disabled, collapsed: t.collapsed,
+        aspectLock: t.aspectLock, disabled: t.disabled, collapsed: t.collapsed, archived: !!t.archived,
         colorUsage: t._usageFor === colorUsageSignature(t) ? t._usage : null,
         colorUsageFor: t._usageFor
     });
@@ -361,8 +378,6 @@
     let templates = [];
     let selectedId = null;
     let nextId = 1;
-
-    let editMode = true;
     let errorMode = false;
     let gOutlineMode = "off";
     const OUTLINE_MODES = ["off", "all", "outer"];
@@ -379,6 +394,7 @@
 
     let gMapScaleAlgorithm = "high", gEditorScaleAlgorithm = "high";
     let gSelectedColorMode = false;
+    let archiveExpanded = false;
     let panelPosition = null, fabPosition = null, panelOpen = false;
     let performanceMode = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
     let walkthroughSeen = false, lastSeenVersion = "";
@@ -404,7 +420,7 @@
         saveSettings();
     }
     function templateInViewport(t) {
-        if (!map || !t?.visible || map.getZoom() < MIN_TEMPLATE_ZOOM) return false;
+        if (!map || !t?.visible || t.archived || map.getZoom() < MIN_TEMPLATE_ZOOM) return false;
         const canvas = map.getCanvas?.();
         const scale = screenPerGlobalPx();
         if (!canvas || !Number.isFinite(scale) || scale <= 0) return true;
@@ -546,7 +562,6 @@
         }
     }
 
-    const ERR_GREEN = [0, 200, 0];
     const ERR_YELLOW = [255, 224, 0];
     const ERR_RED = [255, 40, 40];
 
@@ -602,7 +617,7 @@
                 missing++; col = ERR_YELLOW;
             } else {
                 const painted = closestInSet(pd[i], pd[i + 1], pd[i + 2], PALETTE);
-                if (painted && painted.index === ti) { correct++; pc.correct++; correctMask[p] = 1; col = ERR_GREEN; }
+                if (painted && painted.index === ti) { correct++; pc.correct++; correctMask[p] = 1; continue; }
                 else { wrong++; col = ERR_RED; }
             }
             ed[i] = col[0]; ed[i + 1] = col[1]; ed[i + 2] = col[2]; ed[i + 3] = 255;
@@ -770,7 +785,7 @@
     const templateBeforeId = () => map.getLayer("openplace-hover-border") ? "openplace-hover-border" : undefined;
 
     function templateMode(t) {
-        if (!map || !t.visible || !templateInViewport(t)) return "hidden";
+        if (!map || !t.visible || t.archived || !templateInViewport(t)) return "hidden";
         const z = map.getZoom();
         if (z < MIN_TEMPLATE_ZOOM) return "hidden";
 
@@ -1415,7 +1430,7 @@
             name: name || `template ${nextId}`,
             dataUrl, naturalW, naturalH,
             gx, gy, w: safe.w, h: safe.h,
-            opacity: 0.7, visible: true, locked: false,
+            opacity: 0.7, visible: true, locked: false, archived: false,
             aspectLock: true, disabled: []
         };
         templates.unshift(t);
@@ -1452,6 +1467,21 @@
         if (map) { removeFilledTiles(t); removeDotLayer(t); }
     }
 
+    async function setTemplateArchived(t, archived) {
+        t.archived = archived;
+        if (archived) {
+            t.visible = false;
+            t._workVersion = (t._workVersion || 0) + 1;
+            queuedColorUsage.delete(t);
+            t._analysis = null;
+        } else {
+            t.visible = true;
+        }
+        await updateTemplateTiles(t);
+        storeSet();
+        renderPanel();
+        updateOverlay();
+    }
     async function deleteTemplate(id) {
         removeLayer(id);
         templates = templates.filter((t) => t.id !== id);
@@ -1844,13 +1874,14 @@
     }
 
     const SVGNS = "http://www.w3.org/2000/svg";
-    let overlayRoot = null, svg = null, fillPoly = null, outline = null;
+    let overlayRoot = null, svg = null, fillPoly = null, outline = null, rulerLine = null;
     let handleEls = [];
-    let labelEl = null;
+    let labelEl = null, rulerLabel = null;
 
     let dlPoly = null;
     let dlOutline = true;
     let dlC1 = null, dlC2 = null;
+    let rulerMode = false, rulerStart = null, rulerEnd = null, rulerVisible = false;
 
     const HANDLES = [
         { id: "tl", fx: "right", fy: "bottom", corner: true },
@@ -1902,6 +1933,12 @@
         dlPoly.style.pointerEvents = "none";
         dlPoly.style.display = "none";
         svg.appendChild(dlPoly);
+        rulerLine = document.createElementNS(SVGNS, "line");
+        rulerLine.setAttribute("stroke", "#35d07f");
+        rulerLine.setAttribute("stroke-width", "2");
+        rulerLine.setAttribute("stroke-dasharray", "6 4");
+        rulerLine.style.display = "none";
+        svg.appendChild(rulerLine);
 
         for (const def of HANDLES) {
             const r = document.createElementNS(SVGNS, "rect");
@@ -1927,7 +1964,9 @@
         });
 
         overlayRoot.appendChild(svg);
-        overlayRoot.appendChild(labelEl);
+        overlayRoot.appendChild(labelEl);        rulerLabel = document.createElement("div");
+        Object.assign(rulerLabel.style, { position: "absolute", padding: "2px 6px", borderRadius: "4px", background: "rgba(7,58,34,.9)", color: "#fff", font: "11px ui-monospace,monospace", pointerEvents: "none", whiteSpace: "nowrap", display: "none" });
+        overlayRoot.appendChild(rulerLabel);
         container.appendChild(overlayRoot);
 
         svg.addEventListener("wheel", (e) => {
@@ -1966,15 +2005,18 @@
         if (!overlayRoot) return;
         const t = selected();
         const farAway = !!map && map.getZoom() < MIN_TEMPLATE_ZOOM;
-        const showBox = !!t && editMode && !farAway && !t.locked;
+        const showBox = !!t && !farAway && !t.locked && !t.archived;
         const show = showBox;
         const showDl = !!(dlOutline && dlC1 && dlC2 && dlPoly);
-        const visible = showBox || showDl;
+        const showRuler = !!(rulerStart && rulerEnd && rulerLine && rulerLabel);
+        const visible = showBox || showDl || showRuler;
 
         if (!visible) {
-            if (!overlayBoxVisible && !overlayDownloadVisible) return;
+            if (!overlayBoxVisible && !overlayDownloadVisible && !rulerVisible) return;
             overlayRoot.style.display = "none";
             if (dlPoly) dlPoly.style.display = "none";
+            if (rulerLine) rulerLine.style.display = "none";
+            if (rulerLabel) rulerLabel.style.display = "none";
             outline.style.display = "none";
             fillPoly.style.pointerEvents = "none";
             fillPoly.setAttribute("points", "");
@@ -1999,6 +2041,23 @@
             }
         }
 
+        if (showRuler) {
+            const endX = unwrapHorizontalNear(rulerEnd[0], rulerStart[0]);
+            const a = projGp(rulerStart[0], rulerStart[1]), b = projGp(endX, rulerEnd[1]);
+            const dx = endX - rulerStart[0], dy = rulerEnd[1] - rulerStart[1];
+            rulerLine.setAttribute("x1", a[0]); rulerLine.setAttribute("y1", a[1]);
+            rulerLine.setAttribute("x2", b[0]); rulerLine.setAttribute("y2", b[1]);
+            rulerLine.style.display = "block";
+            rulerLabel.textContent = `${Math.round(Math.hypot(dx, dy)).toLocaleString()} px · ΔX ${dx.toLocaleString()} · ΔY ${dy.toLocaleString()}`;
+            rulerLabel.style.display = "block";
+            rulerLabel.style.left = `${(a[0] + b[0]) / 2}px`;
+            rulerLabel.style.top = `${(a[1] + b[1]) / 2 - 22}px`;
+            rulerVisible = true;
+        } else if (rulerVisible) {
+            rulerLine.style.display = "none";
+            rulerLabel.style.display = "none";
+            rulerVisible = false;
+        }
         if (!showBox) {
             if (!overlayBoxVisible) return;
             outline.style.display = "none";
@@ -2056,7 +2115,7 @@
     function attachPointerHandlers() {
         const onDown = (e) => {
             const t = selected();
-            if (!t || !editMode || t.locked || !e.isPrimary) return;
+            if (!t || t.locked || t.archived || !e.isPrimary) return;
             const handle = e.target?.dataset?.handle;
             const isFill = e.target === fillPoly;
             if (!handle && !isFill) return;
@@ -2271,9 +2330,10 @@
             { title: "Add an image", text: "Select Add image to open the editor. You can also drag and drop an image directly onto the map to start a template at that map location. If you have a pixel selected, importing through the editor uses that pixel as the image’s top-left corner." },
             { title: "Use the editor", text: "In the editor, import an image with the button, drag and drop an image onto the editor, or paste an image from your clipboard. Adjust its palette, resize it, rotate or flip it, then choose whether to add a new template or replace the source of the template you opened." },
             { title: "Move the interface", text: "Drag the overlay by its header to place it anywhere on screen. When it is minimized, hold Ctrl while dragging the small button on desktop; on touch devices, touch-drag it. Both positions are saved automatically." },
-            { title: "Position and lock templates", text: "Templates are unlocked while you position them. Turn on Edit mode to drag them or use their handles to resize. Lock the template once it is aligned: locking prevents accidental edits and enables sharing, color counts, selected color mode, Error mode, and Easy Paint." },
+            { title: "Position and lock templates", text: "Templates are unlocked while you position them. Drag them or use their handles to resize. Lock the template once it is aligned: locking prevents accidental edits and enables sharing, color counts, selected color mode, Difference only, and Easy Paint." },
             { title: "Share with a code", text: "Only locked templates can create a share code. Share the code with someone else; they choose Import code, enter it, review the larger preview, and import the same image at the same map location. Imported shared templates stay locked." },
-            { title: "Settings and painting help", text: "Settings contains display options, map scaling, Performance mode, and backup export/import. Easy Paint only paints matching pixels, while Error mode shows progress. Refresh the page after painting before relying on Easy Paint or Error mode results." }
+            { title: "Keyboard controls", text: "Use W, A, S, and D or the arrow keys to pan the map; hold two directions to move diagonally. Press 1 through 9 to teleport to the first through ninth active templates. Press - to lower, or + to raise, the selected template's opacity by 5%. These keys do not run while you are typing in a field or using the editor." },
+            { title: "Settings and painting help", text: "Settings contains display options, map scaling, Performance mode, and backup export/import. Easy Paint only paints matching pixels, while Difference only shows missing and incorrect pixels. Refresh the page after painting before relying on Easy Paint or Difference only results." }
         ];
         let step = 0;
         const root = document.createElement("div");
@@ -2293,6 +2353,23 @@
         render();
     }
 
+    let changelogRoot = null;
+
+    function showChangelog() {
+        changelogRoot?.remove();
+        const light = uiTheme === "light";
+        const root = document.createElement("div");
+        Object.assign(root.style, { position: "fixed", inset: "0", zIndex: "2147483647", display: "grid", placeItems: "center", padding: "16px", background: "rgba(0,0,0,.62)", font: "13px system-ui,sans-serif" });
+        const box = document.createElement("div");
+        Object.assign(box.style, { width: "min(480px,100%)", maxHeight: "min(680px,calc(100dvh - 32px))", boxSizing: "border-box", overflow: "auto", padding: "18px", border: `1px solid ${light ? "#c4d0dd" : "#344150"}`, borderRadius: "14px", background: light ? "#f8fbff" : "#10161c", color: light ? "#000" : "#eef3f8", boxShadow: "0 18px 48px #0009" });
+        const entries = CHANGELOG.map(({ version, changes }) => `<section style="padding:12px 0;border-bottom:1px solid ${light ? "#d7e1eb" : "#29333e"}"><h2 style="margin:0 0 7px;font-size:15px">v${version}</h2>${changes.map(([type, text]) => `<div style="margin:4px 0"><strong>${escapeHtml(type)}:</strong> ${escapeHtml(text)}</div>`).join("")}</section>`).join("");
+        box.innerHTML = `<div style="position:sticky;top:-18px;display:flex;align-items:center;justify-content:space-between;margin:-18px -18px 10px;padding:18px;background:${light ? "#eef4fa" : "#151c24"};border-bottom:1px solid ${light ? "#c4d0dd" : "#29333e"}"><strong style="font-size:16px">Changelog</strong><button class="rtpl-changelog-close" style="border:0;background:transparent;color:${light ? "#000" : "#fff"};font-size:18px;cursor:pointer">✕</button></div>${entries}`;
+        root.appendChild(box);
+        root.addEventListener("click", (e) => { if (e.target === root) root.remove(); });
+        box.querySelector(".rtpl-changelog-close").addEventListener("click", () => root.remove());
+        document.body.appendChild(root);
+        changelogRoot = root;
+    }
     function buildUI() {
         injectStyles();
 
@@ -2317,7 +2394,7 @@
             <div class="rtpl-top">
                 <div class="rtpl-head">
                     <span>Templates</span>
-                    <div class="rtpl-head-actions"><button class="rtpl-help" title="Show walkthrough" aria-label="Show walkthrough">?</button><button class="rtpl-theme" title="Use light theme" aria-label="Use light theme">☀</button><button class="rtpl-x" title="Close">✕</button></div>
+                    <div class="rtpl-head-actions"><button class="rtpl-help" title="Show walkthrough" aria-label="Show walkthrough">?</button><button class="rtpl-changelog" title="Open changelog" aria-label="Open changelog">≡</button><button class="rtpl-theme" title="Use light theme" aria-label="Use light theme">☀</button><button class="rtpl-x" title="Close">✕</button></div>
                 </div>
                 <div class="rtpl-account" style="display:none"></div>
             </div>
@@ -2367,17 +2444,17 @@
             <div class="rtpl-settings rtpl-settings-collapsed">
                 <div class="rtpl-settings-head"><button class="rtpl-settings-caret">▸</button> Settings</div>
                 <div class="rtpl-globaltoggles">
-                    <label title="Show the on-map box and drag handles used to move or resize templates."><input type="checkbox" class="rtpl-edit"> Edit mode</label>
                     <label title="At close map zoom levels, draw each locked template pixel as a small centered dot."><input type="checkbox" class="rtpl-g-shrink"> Small pixels</label>
                     <label title="Reduces automatic comparison work to help slower devices. Enabled by default on mobile."><input type="checkbox" class="rtpl-g-performance"> Performance mode</label>
                     <label title="Show only the most recently selected openplace palette color on locked templates."><input type="checkbox" class="rtpl-g-selectedcolor"> Selected color mode</label>
                     <label><input type="checkbox" class="rtpl-g-easy"> Easy paint <span class="rtpl-info" tabindex="0" title="Only paint pixels that match the template's colour here; everything else stays as-is. Already-correct pixels are skipped too. Refresh the page after painting to see the proper changes.">?</span></label>
-                    <label title="For visible templates, show correct pixels in green, missing pixels in yellow, and wrong pixels in red."><input type="checkbox" class="rtpl-g-err"> Error mode</label>
+                    <label title="For visible templates, show only missing pixels in yellow and incorrect pixels in red. Correct pixels are transparent."><input type="checkbox" class="rtpl-g-err"> Difference only</label>
                     <label><input type="checkbox" class="rtpl-g-hidedone"> Hide completed colors</label>
                     <div class="rtpl-g-cmrow">Outline:
                         <button class="rtpl-toggle rtpl-g-outline"></button>
                     </div>
                     <div class="rtpl-g-cmrow">Map resize sampling <select class="rtpl-g-scale"></select></div>
+                    <div class="rtpl-g-cmrow"><button class="rtpl-toggle rtpl-ruler" title="Measure the pixel distance between two map clicks">Ruler</button></div>
                     <div class="rtpl-g-cmrow">WASD pan step
                         <input type="number" class="rtpl-g-panstep" min="1" max="5000" step="10">
                         <span class="rtpl-muted">px / press</span>
@@ -2396,6 +2473,7 @@
 
         panel.querySelector(".rtpl-x").addEventListener("click", () => { panelOpen = false; panel.classList.add("rtpl-hidden"); saveSettings(); });
         panel.querySelector(".rtpl-help").addEventListener("click", () => showWalkthrough(true));
+        panel.querySelector(".rtpl-changelog").addEventListener("click", showChangelog);
         panel.querySelector(".rtpl-theme").addEventListener("click", () => setTheme(uiTheme === "light" ? "dark" : "light"));
 
         const settings = panel.querySelector(".rtpl-settings");
@@ -2443,8 +2521,6 @@
             for (const f of e.target.files) await createTemplateFromFile(f, placement);
             fileInput.value = "";
         });
-
-        const editCb = panel.querySelector(".rtpl-edit");
         const shrinkCb = panel.querySelector(".rtpl-g-shrink");
         const performanceCb = panel.querySelector(".rtpl-g-performance");
         const selectedColorCb = panel.querySelector(".rtpl-g-selectedcolor");
@@ -2452,7 +2528,7 @@
         const errCb = panel.querySelector(".rtpl-g-err");
         const hideDoneCb = panel.querySelector(".rtpl-g-hidedone");
         const outlineBtn = panel.querySelector(".rtpl-g-outline");
-        editCb.checked = editMode;
+        const rulerBtn = panel.querySelector(".rtpl-ruler");
         shrinkCb.checked = gShrink;
         performanceCb.checked = performanceMode;
         selectedColorCb.checked = gSelectedColorMode;
@@ -2461,10 +2537,8 @@
         hideDoneCb.checked = gHideCompleted;
         const setOutlineLabel = () => { outlineBtn.textContent = `${OUTLINE_LABELS[gOutlineMode]}`; };
         setOutlineLabel();
-
-        editCb.addEventListener("change", (e) => {
-            editMode = e.target.checked; updateOverlay(); saveSettings();
-        });
+        updateRulerControl();
+        rulerBtn.addEventListener("click", toggleRuler);
         shrinkCb.addEventListener("change", async (e) => {
             gShrink = e.target.checked; saveSettings();
             await applyGlobalDisplayChange();
@@ -2621,12 +2695,40 @@
         });
     }
 
+    function updateRulerControl() {
+        const button = panel?.querySelector(".rtpl-ruler");
+        if (!button) return;
+        button.textContent = rulerMode ? "Cancel ruler" : rulerStart ? "New measure" : "Ruler";
+        button.classList.toggle("rtpl-active", rulerMode);
+    }
+
+    function toggleRuler() {
+        rulerMode = !rulerMode;
+        rulerStart = null;
+        rulerEnd = null;
+        updateRulerControl();
+        updateOverlay();
+        if (rulerMode) showToast("Ruler: click two map pixels to measure the distance.", "info", 4000);
+    }
     function attachPickHandler() {
         map.on("click", (e) => {
             const gx = Math.floor(lngToGpx(e.lngLat.lng));
             const gy = Math.floor(latToGpy(e.lngLat.lat));
 
             lastPixel = { gx, gy };
+            if (rulerMode) {
+                if (!rulerStart) {
+                    rulerStart = [gx, gy];
+                    showToast("Ruler start set. Click the second pixel.", "info", 3500);
+                } else {
+                    rulerEnd = [gx, gy];
+                    rulerMode = false;
+                    showToast("Ruler measurement ready.", "success", 2500);
+                }
+                updateRulerControl();
+                updateOverlay();
+                return;
+            }
             if (!pickMode) return;
             dlSetCorner(pickMode, gx, gy);
             dlStatus(`Corner ${pickMode} set to tile ${Math.floor(gx / TILE_SIZE)},${Math.floor(gy / TILE_SIZE)}.`);
@@ -2667,9 +2769,34 @@
         keyboardPanFrame = requestAnimationFrame(runKeyboardPan);
     }
 
+    function adjustSelectedOpacity(delta) {
+        const t = selected();
+        if (!t || t.archived) return;
+        t.opacity = clamp(Math.round((t.opacity + delta) * 20) / 20, 0, 1);
+        setTemplateOpacity(t);
+        const slider = cardOf(t)?.querySelector(".rtpl-opacity");
+        if (slider) slider.value = t.opacity;
+        storeSet();
+    }
     function attachKeyboardPan() {
         window.addEventListener("keydown", (e) => {
-            if (!keyboardPanCodes.has(e.code) || e.ctrlKey || e.metaKey || e.altKey || keyboardPanBlocked()) return;
+            if (e.ctrlKey || e.metaKey || e.altKey || keyboardPanBlocked()) return;
+            if (["Minus", "NumpadSubtract", "Equal", "NumpadAdd"].includes(e.code)) {
+                e.preventDefault();
+                e.stopPropagation();
+                adjustSelectedOpacity(["Minus", "NumpadSubtract"].includes(e.code) ? -0.05 : 0.05);
+                return;
+            }
+            const hotkey = /^Digit([1-9])$/.exec(e.code) || /^Numpad([1-9])$/.exec(e.code);
+            if (hotkey) {
+                const t = templates.filter((template) => !template.archived)[Number(hotkey[1]) - 1];
+                if (!t) return;
+                e.preventDefault();
+                e.stopPropagation();
+                goToTemplate(t);
+                return;
+            }
+            if (!keyboardPanCodes.has(e.code)) return;
             e.preventDefault();
             e.stopPropagation();
             keyboardPanKeys.add(e.code);
@@ -2798,11 +2925,35 @@
             panelBody.innerHTML = `<div class="rtpl-empty">No templates yet.</div>`;
             return;
         }
-        for (const t of templates) {
+        const activeTemplates = templates.filter((t) => !t.archived);
+        const archivedTemplates = templates.filter((t) => t.archived);
+        const renderGroups = [{ items: activeTemplates, archived: false }];
+        if (archivedTemplates.length) renderGroups.push({ items: archivedTemplates, archived: true });
+        for (const group of renderGroups) {
+            let target = panelBody;
+            if (group.archived) {
+                const head = document.createElement("button");
+                head.className = "rtpl-archive-head";
+                head.textContent = `${archiveExpanded ? "▾" : "▸"} Archived templates (${archivedTemplates.length})`;
+                head.addEventListener("click", () => { archiveExpanded = !archiveExpanded; saveSettings(); renderPanel(); });
+                target = document.createElement("div");
+                target.className = "rtpl-archive-body";
+                target.style.display = archiveExpanded ? "flex" : "none";
+                panelBody.appendChild(head);
+                panelBody.appendChild(target);
+            }
+            for (const t of group.items) {
             const card = document.createElement("div");
             card.className = "rtpl-card" + (t.id === selectedId ? " rtpl-sel" : "") + (t.collapsed ? " rtpl-collapsed" : "");
             card.dataset.card = t.id;
-            const { tx, ty, px, py } = gpToTilePixel(t.gx, t.gy);
+            const { tx, ty, px, py } = gpToTilePixel(t.gx, t.gy);            if (t.archived) {
+                card.innerHTML = `<div class="rtpl-row1"><div class="rtpl-meta"><div class="rtpl-name">${escapeHtml(t.name)}</div><div class="rtpl-dim">${t.w}×${t.h}px · tile ${tx},${ty} px ${px},${py}</div></div><button class="rtpl-toggle rtpl-go">Go to</button><button class="rtpl-toggle rtpl-del">Delete</button></div><div class="rtpl-row3"><button class="rtpl-toggle rtpl-unarchive">Unarchive</button></div>`;
+                card.querySelector(".rtpl-go").addEventListener("click", () => goToTemplate(t));
+                card.querySelector(".rtpl-del").addEventListener("click", () => { if (confirm(`Delete template "${t.name}"? This cannot be undone.`)) deleteTemplate(t.id); });
+                card.querySelector(".rtpl-unarchive").addEventListener("click", () => setTemplateArchived(t, false));
+                target.appendChild(card);
+                continue;
+            }
             card.innerHTML = `
                 <div class="rtpl-row1">
                     <span class="rtpl-drag" title="Drag to reorder — top of the list is painted on top of overlaps">⠿</span>
@@ -2829,7 +2980,8 @@
                         <button class="rtpl-toggle rtpl-ar">${t.aspectLock ? "Ratio" : "Free resize"}</button>
                         <button class="rtpl-toggle rtpl-one">1:1 size</button>
                         `}
-                    </div>${t.locked ? "" : `
+                    </div>
+                    <div class="rtpl-row3"><button class="rtpl-toggle rtpl-archive">Archive template</button></div>${t.locked ? "" : `
                     <div class="rtpl-row3">
                         <label class="rtpl-num">X tile<input type="number" class="rtpl-tx" value="${tx}"></label>
                         <label class="rtpl-num">Y tile<input type="number" class="rtpl-ty" value="${ty}"></label>
@@ -2879,6 +3031,8 @@
             card.querySelector(".rtpl-del").addEventListener("click", () => {
                 if (confirm(`Delete template "${t.name}"? This cannot be undone.`)) deleteTemplate(t.id);
             });
+            card.querySelector(".rtpl-archive").addEventListener("click", () => setTemplateArchived(t, true));
+
             card.querySelector(".rtpl-opacity").addEventListener("input", (e) => {
                 t.opacity = parseFloat(e.target.value);
                 setTemplateOpacity(t);
@@ -2945,9 +3099,12 @@
                 });
             }
 
-            panelBody.appendChild(card);
-            queueOverlayPreview(t, card.querySelector(".rtpl-thumb"));
-            renderColorList(t, card);
+            target.appendChild(card);
+            if (!t.archived) {
+                queueOverlayPreview(t, card.querySelector(".rtpl-thumb"));
+                renderColorList(t, card);
+            }
+        }
         }
     }
 
@@ -3253,7 +3410,8 @@
         .rtpl-g-panstep{flex:0 0 auto;width:64px;background:#161a1f;border:1px solid #2c333d;color:#fff;border-radius:4px;padding:3px 5px}
         .rtpl-hint{padding:4px 12px 8px;color:#8a93a0;font-size:11px;line-height:1.4}
 
-        .rtpl-list{padding:0 12px 12px;display:flex;flex-direction:column;gap:10px}
+        .rtpl-list{padding:0 12px 12px;display:flex;flex-direction:column;gap:10px}        .rtpl-archive-head{margin:0 10px 8px;padding:7px 9px;border:1px solid #344150;border-radius:7px;background:#18212a;color:#d9e3ed;cursor:pointer;text-align:left;font-size:11px}
+        .rtpl-archive-body{display:flex;flex-direction:column;gap:7px;padding:0 10px 10px}
         .rtpl-empty{color:#888;padding:8px 0}
         .rtpl-card{border:1px solid #2c333d;border-radius:8px;padding:8px;background:#20262e}
         .rtpl-card.rtpl-sel{border-color:#3a86ff;box-shadow:0 0 0 1px #3a86ff inset}
@@ -4228,7 +4386,7 @@
             templates = saved.map((savedTemplate) => {
                 const template = {
                     disabled: [], aspectLock: true,
-                    opacity: 0.7, visible: true, locked: false, collapsed: false,
+                    opacity: 0.7, visible: true, locked: false, collapsed: false, archived: false,
                     ...savedTemplate,
                     disabled: Array.isArray(savedTemplate.disabled) ? savedTemplate.disabled : []
                 };
@@ -4242,7 +4400,7 @@
                 return template;
             });
             nextId = Math.max(...templates.map((t) => t.id)) + 1;
-            selectedId = templates[0].id;
+            selectedId = (templates.find((t) => !t.archived) || templates[0]).id;
         }
 
         buildUI();
