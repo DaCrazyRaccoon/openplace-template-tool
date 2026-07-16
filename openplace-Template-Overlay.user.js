@@ -3,7 +3,7 @@
 // @namespace    https://github.com/DaCrazyRaccoon/
 // @description  Drag-and-drop image template overlays for openplace, with responsive large-image editing, palette dithering, and grid-aligned resizing.
 // @license      MPL-2.0
-// @version      1.8.6
+// @version      1.8.7
 // @updateURL    https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/openplace-Template-Overlay.user.js
 // @downloadURL  https://raw.githubusercontent.com/DaCrazyRaccoon/openplace-template-tool/main/openplace-Template-Overlay.user.js
 // @homepageURL  https://github.com/DaCrazyRaccoon/openplace-template-tool
@@ -33,8 +33,9 @@
     const SCALE_ALGORITHMS = [["nearest","Nearest-neighbor (crisp)"],["low","Smooth — low quality"],["medium","Smooth — medium quality"],["high","Smooth — high quality"]];
 
     const LOG = (...a) => console.log("%c[Template]", "color:#3a86ff", ...a);
-    const SCRIPT_VERSION = "1.8.6";
+    const SCRIPT_VERSION = "1.8.7";
     const CHANGELOG = [
+        { version: "1.8.7", changes: [["Fixed", "Live charge status synchronization."]] },
         { version: "1.8.6", changes: [["Fixed", "Overlay handle artifact."], ["Fixed", "Charge status accuracy."]] },
         { version: "1.8.5", changes: [["Reworked", "Walkthrough keyboard guidance."]] },
         { version: "1.8.4", changes: [["Removed", "Edit mode setting."], ["Reworked", "Unlocked templates are always editable."], ["Reworked", "Archived template actions."]] },
@@ -128,8 +129,9 @@
         return location.origin;
     };
 
-    const me = { droplets: null, charges: null, max: null, cooldownMs: null };
+    const me = { droplets: null, charges: null, max: null, cooldownMs: null, syncAt: 0, liveCharges: null, liveMax: null };
     let accountRefreshTimer = null;
+    let accountMirrorObserver = null, accountMirrorQueued = false;
 
     async function fetchUserColors() {
         try {
@@ -144,6 +146,7 @@
                 me.charges = u.charges.count;
                 me.max = u.charges.max;
                 me.cooldownMs = u.charges.cooldownMs;
+                me.syncAt = Date.now();
             }
             userFetched = true;
             updateAccountBar();
@@ -158,6 +161,39 @@
         }, delay);
     }
 
+    function estimatedCharges() {
+        if (me.charges == null || me.max == null || !me.cooldownMs) return me.charges;
+        return Math.min(me.max, me.charges + (Date.now() - me.syncAt) / me.cooldownMs);
+    }
+
+    function syncLiveChargeStatus() {
+        const text = document.querySelector(".paint-button")?.textContent || "";
+        const match = text.match(/\bPaint\s+([\d,]+)\s*\/\s*([\d,]+)/i);
+        if (!match) return false;
+        const charges = Number(match[1].replace(/,/g, ""));
+        const max = Number(match[2].replace(/,/g, ""));
+        if (!Number.isFinite(charges) || !Number.isFinite(max)) return false;
+        me.liveCharges = charges;
+        me.liveMax = max;
+        updateAccountBar();
+        return true;
+    }
+
+    function watchLiveChargeStatus() {
+        if (accountMirrorObserver || !document.documentElement) return;
+        const schedule = () => {
+            if (accountMirrorQueued) return;
+            accountMirrorQueued = true;
+            requestAnimationFrame(() => {
+                accountMirrorQueued = false;
+                syncLiveChargeStatus();
+            });
+        };
+        accountMirrorObserver = new MutationObserver(schedule);
+        accountMirrorObserver.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+        syncLiveChargeStatus();
+    }
+
     const fmtDuration = (ms) => {
         if (ms <= 0) return "full";
         const s = Math.ceil(ms / 1000), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
@@ -169,11 +205,13 @@
         if (!accountBarEl) return;
         if (me.charges == null) { accountBarEl.style.display = "none"; return; }
         accountBarEl.style.display = "flex";
-        const cur = Math.min(me.max, Math.max(0, Math.floor(me.charges)));
-        const full = (me.max - cur) * me.cooldownMs;
+        const max = me.liveMax ?? me.max;
+        const charges = me.liveCharges ?? estimatedCharges();
+        const cur = Math.min(max, Math.max(0, Math.floor(charges)));
+        const full = (max - cur) * me.cooldownMs;
         accountBarEl.innerHTML =
             `<span title="Droplets">💧 ${me.droplets != null ? me.droplets.toLocaleString() : "—"}</span>` +
-            `<span title="Charges">⚡ ${Math.floor(cur)}/${me.max}</span>` +
+            `<span title="Charges">⚡ ${cur}/${max}</span>` +
             `<span title="Time to full charges">⏳ ${fmtDuration(full)}</span>`;
     }
 
@@ -4432,6 +4470,7 @@
         updateOverlay();
 
         fetchUserColors();
+        watchLiveChargeStatus();
         setInterval(fetchUserColors, 10_000);
         setInterval(updateAccountBar, 1000);
 
